@@ -1,0 +1,34 @@
+schema_version = "1.0.0"
+
+# Extension manifest for Export_To_UE
+# https://docs.blender.org/manual/en/latest/advanced/extensions/getting_started.html
+
+id = "export_to_ue"
+version = "0.1.1"
+name = "Export To UE"
+tagline = "Export models to Unreal Engine with proper FBX settings"
+maintainer = "BI1MCS"
+type = "add-on"
+
+tags = ["Import-Export"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+# Optional: link to documentation, support, source files
+website = "https://extensions.blender.org/add-ons/export-to-ue/"
+
+[permissions]
+files = "Export FBX files to disk and read/write plugin config"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".git",
+  "*.zip",
+  "*cache*",
+  "export_to_ue_config.json",
+]
