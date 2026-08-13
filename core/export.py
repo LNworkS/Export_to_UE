@@ -9,23 +9,24 @@ from .texture_export import get_ue_parent_material
 
 
 def _get_base_name(obj_name):
-    """Get base name without LOD suffix.
+    """Get base name without UCX prefix, collision suffix, or LOD suffix.
     
     Examples:
         sm_com_cube01 -> sm_com_cube01
         sm_com_cube01_lod0 -> sm_com_cube01
         sm_com_cube01_LOD1 -> sm_com_cube01
+        UCX_sm_com_desk01 -> sm_com_desk01
+        UCX_sm_com_desk02_01 -> sm_com_desk02
+        UCX_sm_com_wall01.001 -> sm_com_wall01
+        UCX_sm_com_pillar01_001 -> sm_com_pillar01
     """
+    import re
     name = obj_name.lower()
-    # Remove _lodN or _LODN suffix
-    while '_lod' in name:
-        idx = name.find('_lod')
-        # Check if followed by a digit
-        after = name[idx + 4:]
-        if after and after[0].isdigit():
-            name = name[:idx]
-        else:
-            break
+    is_collision = name.startswith('ucx_')
+    if is_collision:
+        name = name[4:]
+        name = re.sub(r'[_\.\d{2,3}$', '', name)
+    name = re.sub(r'_lod\d+$', '', name)
     return name
 
 
@@ -101,6 +102,8 @@ def classify_objects(selected_only, include_lod):
         # Try to find matching mesh group
         matched = False
         for export_dict in export_list:
+            if not export_dict.get('mesh'):
+                continue
             mesh_base = _get_base_name(export_dict['mesh'][0].name)
             if col_base == mesh_base:
                 export_dict['collision'].append(col_obj)
@@ -168,15 +171,17 @@ def separate_collision(export_list):
     """Separate collision objects into individual pieces before export.
 
     For each collision object:
-    1. Save original name
+    1. Save original name and reference
     2. Separate by loose parts
     3. Rename each piece to UCX_<base>_<NNN>
+    4. Track which pieces belong to which original for correct merging
 
     Args:
         export_list: List of export dicts
 
     Returns:
         list: Modified export_list with separated collision meshes.
+              Piece mapping saved in export_dict['_collision_pieces_map'].
               Original names saved in export_dict['_collision_original_names'].
     """
     for export_dict in export_list:
@@ -185,14 +190,13 @@ def separate_collision(export_list):
             continue
 
         # Save original names for restoration during merge
-        original_names = {obj.name: obj for obj in collision_objs}
-        export_dict['_collision_original_names'] = list(original_names.keys())
+        original_names = [obj.name for obj in collision_objs]
+        export_dict['_collision_original_names'] = original_names
 
         # Determine base name for renaming
         active_objs = export_dict.get('active', [])
         if active_objs:
             base_name = active_objs[0].name
-            # Strip UCX_ prefix if present
             if base_name.lower().startswith('ucx_'):
                 base_name = base_name[4:]
         elif collision_objs:
@@ -202,7 +206,11 @@ def separate_collision(export_list):
         else:
             base_name = 'collision'
 
+        # Track pieces per original collision object
+        pieces_map = {}
         new_collision_list = []
+        global_idx = 0
+
         for obj in collision_objs:
             bpy.ops.object.select_all(action='DESELECT')
             obj.select_set(True)
@@ -213,18 +221,22 @@ def separate_collision(export_list):
                 bpy.ops.mesh.separate(type='LOOSE')
                 bpy.ops.object.mode_set(mode='OBJECT')
 
-                # Collect all separated objects (original + new)
                 separated = [o for o in bpy.context.selected_objects if o.type == 'MESH']
             else:
                 separated = [obj]
 
+            # Store piece mapping: original_name -> [pieces]
+            pieces_map[obj.name] = separated
+
+            # Rename pieces with global index
+            for piece in separated:
+                global_idx += 1
+                piece.name = f"UCX_{base_name}_{global_idx:03d}"
+
             new_collision_list.extend(separated)
             bpy.ops.object.select_all(action='DESELECT')
 
-        # Rename collision pieces sequentially
-        for idx, obj in enumerate(new_collision_list, start=1):
-            obj.name = f"UCX_{base_name}_{idx:03d}"
-
+        export_dict['_collision_pieces_map'] = pieces_map
         export_dict['collision'] = new_collision_list
         bpy.ops.object.select_all(action='DESELECT')
 
@@ -234,46 +246,46 @@ def separate_collision(export_list):
 def merge_collision(export_list):
     """Merge separated collision objects back into single objects after export.
 
-    Restores original collision object names.
+    For each original collision object, merges its pieces back into one object
+    and restores the original name. Preserves independent collision structure.
 
     Args:
         export_list: List of export dicts with '_collision_original_names'
+                     and '_collision_pieces_map'
 
     Returns:
         list: Modified export_list with merged collision meshes.
     """
     for export_dict in export_list:
-        collision_objs = export_dict.get('collision', [])
         original_names = export_dict.get('_collision_original_names', [])
-        if not collision_objs or not original_names:
+        pieces_map = export_dict.get('_collision_pieces_map', {})
+        if not original_names or not pieces_map:
             continue
 
-        # If only one collision piece, just restore the name (no join needed)
-        mesh_collision = [obj for obj in collision_objs if obj.type == 'MESH']
-        if len(mesh_collision) <= 1:
-            if mesh_collision:
-                mesh_collision[0].name = original_names[0]
-                export_dict['collision'] = [mesh_collision[0]]
-            export_dict.pop('_collision_original_names', None)
-            continue
+        merged_collision = []
 
-        # Select all collision pieces and join
-        bpy.ops.object.select_all(action='DESELECT')
-        for obj in mesh_collision:
-            obj.select_set(True)
+        for orig_name in original_names:
+            pieces = pieces_map.get(orig_name, [])
+            mesh_pieces = [p for p in pieces if p.type == 'MESH']
 
-        if not bpy.context.selected_objects:
-            continue
+            if len(mesh_pieces) == 0:
+                continue
+            elif len(mesh_pieces) == 1:
+                mesh_pieces[0].name = orig_name
+                merged_collision.append(mesh_pieces[0])
+            else:
+                bpy.ops.object.select_all(action='DESELECT')
+                for p in mesh_pieces:
+                    p.select_set(True)
+                bpy.context.view_layer.objects.active = mesh_pieces[0]
+                bpy.ops.object.join()
+                merged = bpy.context.active_object
+                merged.name = orig_name
+                merged_collision.append(merged)
 
-        bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
-        bpy.ops.object.join()
-
-        merged = bpy.context.active_object
-        # Restore original name
-        merged.name = original_names[0]
-
-        export_dict['collision'] = [merged]
+        export_dict['collision'] = merged_collision
         export_dict.pop('_collision_original_names', None)
+        export_dict.pop('_collision_pieces_map', None)
         bpy.ops.object.select_all(action='DESELECT')
 
     return export_list
