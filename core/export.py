@@ -8,14 +8,37 @@ from .coordinate import apply_transform_to_ue, sanitize_vector
 from .texture_export import get_ue_parent_material
 
 
+def _get_base_name(obj_name):
+    """Get base name without LOD suffix.
+    
+    Examples:
+        sm_com_cube01 -> sm_com_cube01
+        sm_com_cube01_lod0 -> sm_com_cube01
+        sm_com_cube01_LOD1 -> sm_com_cube01
+    """
+    name = obj_name.lower()
+    # Remove _lodN or _LODN suffix
+    while '_lod' in name:
+        idx = name.find('_lod')
+        # Check if followed by a digit
+        after = name[idx + 4:]
+        if after and after[0].isdigit():
+            name = name[:idx]
+        else:
+            break
+    return name
+
+
 def classify_objects(selected_only, include_lod):
     """Classify selected objects into export groups.
 
     Groups objects by LOD hierarchy (mesh + collision) for FBX export.
+    Each independent mesh gets its own export group. LOD variants and
+    collision objects are matched by base name.
 
     Args:
         selected_only: bool - Export only selected objects
-        include_lod: bool - Handle LOD groups
+        include_lod: bool - Handle LOD groups (combine LOD variants)
 
     Returns:
         tuple: (success: bool, message: str, export_list: list)
@@ -28,104 +51,91 @@ def classify_objects(selected_only, include_lod):
     if not selected_objects:
         return (False, "No objects selected for export.", None)
 
-    export_list = []
+    # Phase 1: Separate objects by type
+    meshes = []
+    collisions = []
+    empties = []
 
     for obj in selected_objects:
-        if obj.type not in ('MESH', 'EMPTY'):
-            continue
+        if obj.type == 'MESH':
+            if len(obj.name) >= 3 and obj.name[0:3].lower() == 'ucx':
+                collisions.append(obj)
+            else:
+                meshes.append(obj)
+        elif obj.type == 'EMPTY':
+            empties.append(obj)
 
-        # Ensure object is in object mode
-        if obj.mode == 'EDIT':
-            bpy.ops.object.mode_set(mode='OBJECT')
+    # Phase 2: Create export groups for each mesh
+    export_list = []
+    
+    if include_lod:
+        # Group meshes by base name (LOD variants)
+        mesh_groups = {}
+        for mesh in meshes:
+            base = _get_base_name(mesh.name)
+            if base not in mesh_groups:
+                mesh_groups[base] = []
+            mesh_groups[base].append(mesh)
 
-        if obj.type == 'EMPTY':
-            # Empty objects can be LOD group parents
-            if include_lod:
-                continue
+        for base, group_meshes in mesh_groups.items():
+            # Sort by name to ensure consistent LOD ordering
+            group_meshes.sort(key=lambda m: m.name.lower())
+            export_list.append({
+                'mesh': group_meshes,
+                'active': [group_meshes[0]],
+                'collision': [],
+            })
+    else:
+        # Each mesh gets its own group (independent export)
+        for mesh in meshes:
+            export_list.append({
+                'mesh': [mesh],
+                'active': [mesh],
+                'collision': [],
+            })
 
-            # Check if this empty is already in a group
-            found = False
-            for export_dict in export_list:
-                if any(obj.name in m.name for m in export_dict.get('mesh', [])):
-                    export_dict.setdefault('active', []).append(obj)
-                    found = True
+    # Phase 3: Match collision objects to mesh groups
+    for col_obj in collisions:
+        col_base = _get_base_name(col_obj.name)
+        
+        # Try to find matching mesh group
+        matched = False
+        for export_dict in export_list:
+            mesh_base = _get_base_name(export_dict['mesh'][0].name)
+            if col_base == mesh_base:
+                export_dict['collision'].append(col_obj)
+                matched = True
+                break
+        
+        if not matched:
+            # Orphan collision - create its own group
+            export_list.append({
+                'mesh': [],
+                'active': [],
+                'collision': [col_obj],
+            })
+
+    # Phase 4: Handle empty objects
+    for empty_obj in empties:
+        # Try to match to existing group by name prefix
+        matched = False
+        for export_dict in export_list:
+            if export_dict.get('mesh'):
+                mesh_base = _get_base_name(export_dict['mesh'][0].name)
+                if empty_obj.name.lower() == mesh_base:
+                    export_dict['active'] = [empty_obj]
+                    matched = True
                     break
-                if any(obj.name in c.name for c in export_dict.get('collision', [])):
-                    export_dict.setdefault('active', []).append(obj)
-                    found = True
-                    break
+        
+        if not matched:
+            # Standalone empty - create its own group
+            export_list.append({
+                'mesh': [],
+                'active': [empty_obj],
+                'collision': [],
+            })
 
-            if not found:
-                export_list.append({
-                    'mesh': [],
-                    'active': [obj],
-                    'collision': [],
-                })
-
-        elif len(obj.name) >= 3 and obj.name[0:3].lower() == 'ucx':
-            # Collision object
-            found = False
-            for export_dict in export_list:
-                if include_lod:
-                    if any('_lod0' in m.name.lower() for m in export_dict.get('mesh', [])):
-                        export_dict.setdefault('collision', []).append(obj)
-                        found = True
-                        break
-                else:
-                    if export_dict.get('active') and export_dict['active'][0].name in obj.name:
-                        export_dict.setdefault('collision', []).append(obj)
-                        found = True
-                        break
-                    # Match by base name
-                    for mesh in export_dict.get('mesh', []):
-                        obj_base = obj.name.lower().split('ucx_')[1].split('_lod')[0]
-                        mesh_base = mesh.name.lower().split('_lod')[0]
-                        if obj_base == mesh_base:
-                            export_dict.setdefault('collision', []).append(obj)
-                            found = True
-                            break
-
-            if not found:
-                export_list.append({
-                    'mesh': [],
-                    'active': [],
-                    'collision': [obj],
-                })
-
-        else:
-            # Regular mesh object
-            if include_lod:
-                export_list.append({
-                    'mesh': [obj],
-                    'active': [obj],
-                    'collision': [],
-                })
-                continue
-
-            found = False
-            for export_dict in export_list:
-                if export_dict.get('active') and export_dict['active'][0].name in obj.name:
-                    export_dict['mesh'].append(obj)
-                    found = True
-                    break
-
-                # Match by base name with collision
-                for col in export_dict.get('collision', []):
-                    obj_base = obj.name.lower().split('_lod')[0]
-                    col_base = col.name.lower().split('ucx_')[1].split('_lod')[0]
-                    if obj_base == col_base:
-                        export_dict['mesh'].append(obj)
-                        found = True
-                        break
-
-            if not found:
-                export_list.append({
-                    'mesh': [obj],
-                    'active': [obj],
-                    'collision': [],
-                })
-
-    # Ensure each group has an active (parent)
+    # Phase 5: Ensure each group has an active (parent)
     for export_dict in export_list:
         if not export_dict.get('active'):
             if len(export_dict.get('mesh', [])) == 1:
@@ -134,21 +144,20 @@ def classify_objects(selected_only, include_lod):
                 # Create an empty as LOD group parent
                 bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
                 empty_obj = bpy.context.object
-                base_name = export_dict['mesh'][0].name.lower().split('_lod')[0]
+                base_name = _get_base_name(export_dict['mesh'][0].name)
                 empty_obj.name = base_name
                 empty_obj['fbx_type'] = 'LodGroup'
                 export_dict['active'] = [empty_obj]
             elif export_dict.get('collision'):
                 export_dict['active'] = [export_dict['collision'][0]]
 
-    # Set LOD hierarchy
+    # Phase 6: Set LOD hierarchy (parent LOD variants to active)
     for export_dict in export_list:
-        meshes = export_dict.get('mesh', [])
-        is_lod = any('_lod' in m.name.lower() for m in meshes)
+        mesh_objects = export_dict.get('mesh', [])
+        is_lod = len(mesh_objects) > 1 or any('_lod' in m.name.lower() for m in mesh_objects)
         if is_lod and export_dict.get('active'):
             active_obj = export_dict['active'][0]
-            for mesh_obj in meshes:
-                # Don't parent an object to itself
+            for mesh_obj in mesh_objects:
                 if mesh_obj != active_obj:
                     mesh_obj.parent = active_obj
 
