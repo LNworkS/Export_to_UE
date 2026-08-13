@@ -25,7 +25,7 @@ def _get_base_name(obj_name):
     is_collision = name.startswith('ucx_')
     if is_collision:
         name = name[4:]
-        name = re.sub(r'[_\.\d{2,3}$', '', name)
+        name = re.sub(r'[_\.]\d{2,3}$', '', name)
     name = re.sub(r'_lod\d+$', '', name)
     return name
 
