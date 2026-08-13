@@ -365,7 +365,7 @@ class OBJECT_OT_cancel_export_check(bpy.types.Operator):
 # Path Selection Operator
 # ============================================================
 
-class OBJECT_OT_select_export_path(bty.types.Operator):
+class OBJECT_OT_select_export_path(bpy.types.Operator):
     """Open file browser to select export directory."""
     bl_idname = "object.select_export_path"
     bl_label = "Select Export Path"
