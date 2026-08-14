@@ -9,37 +9,70 @@ from .texture_export import get_ue_parent_material
 
 
 def _get_base_name(obj_name):
-    """Get base name without UCX prefix, collision suffix, or LOD suffix.
-    
+    """Get base name for grouping and matching.
+
+    For collision objects (UCX_ prefix):
+    - Strip UCX_ prefix
+    - Strip Blender's auto-suffix .XXX (e.g., .001, .002)
+    - Do NOT strip _XX or _XXX (these are part of the model name being matched,
+      per strict matching requirement)
+
+    For mesh objects:
+    - Strip _LODx suffix (case-insensitive)
+
     Examples:
         sm_com_cube01 -> sm_com_cube01
-        sm_com_cube01_lod0 -> sm_com_cube01
+        sm_com_cube01_LOD0 -> sm_com_cube01
         sm_com_cube01_LOD1 -> sm_com_cube01
-        UCX_sm_com_desk01 -> sm_com_desk01
-        UCX_sm_com_desk02_01 -> sm_com_desk02
-        UCX_sm_com_wall01.001 -> sm_com_wall01
-        UCX_sm_com_pillar01_001 -> sm_com_pillar01
+        UCX_sm_com_cube01 -> sm_com_cube01
+        UCX_sm_com_cube01_01 -> sm_com_cube01_01  (kept! strict matching)
+        UCX_sm_com_cube01.001 -> sm_com_cube01  (Blender auto-suffix stripped)
     """
     import re
     name = obj_name.lower()
     is_collision = name.startswith('ucx_')
     if is_collision:
         name = name[4:]
-        name = re.sub(r'[_\.]\d{2,3}$', '', name)
-    name = re.sub(r'_lod\d+$', '', name)
+        # Only strip Blender's auto-generated .XXX suffix (not _XX or _XXX)
+        name = re.sub(r'\.\d{3}$', '', name)
+    else:
+        # Strip LOD suffix for mesh objects
+        name = re.sub(r'_lod\d+$', '', name)
     return name
+
+
+def _is_lod_mesh(obj):
+    """Check if obj name has _LODx suffix (case-insensitive)."""
+    import re
+    return bool(re.search(r'_lod\d+$', obj.name.lower()))
+
+
+def _strip_lod_suffix(name):
+    """Strip _LODx suffix from name (case-insensitive)."""
+    import re
+    return re.sub(r'_lod\d+$', '', name, flags=re.IGNORECASE)
 
 
 def classify_objects(selected_only, include_lod):
     """Classify selected objects into export groups.
 
-    Groups objects by LOD hierarchy (mesh + collision) for FBX export.
-    Each independent mesh gets its own export group. LOD variants and
-    collision objects are matched by base name.
+    Grouping logic:
+    - include_lod=True (LOD grouping mode):
+      * Meshes WITHOUT _LODx suffix: each becomes its own independent group.
+      * Meshes WITH _LODx suffix: grouped by base name (e.g., sm_com_cube01_LOD0
+        and sm_com_cube01_LOD1 form one LOD group).
+      * Single-LOD groups (only 1 _LODx mesh) are flagged for error reporting.
+    - include_lod=False (independent mode):
+      * Every mesh becomes its own group, no LOD grouping.
+
+    Collision matching (strict):
+      UCX_sm_com_cube01 matches sm_com_cube01 (or LOD group base sm_com_cube01).
+      UCX_sm_com_cube01_01 only matches sm_com_cube01_01 (NOT sm_com_cube01).
+      UCX_sm_com_cube01.001 matches sm_com_cube01 (Blender auto-suffix stripped).
 
     Args:
         selected_only: bool - Export only selected objects
-        include_lod: bool - Handle LOD groups (combine LOD variants)
+        include_lod: bool - True=LOD grouping mode, False=independent mode
 
     Returns:
         tuple: (success: bool, message: str, export_list: list)
@@ -66,40 +99,55 @@ def classify_objects(selected_only, include_lod):
         elif obj.type == 'EMPTY':
             empties.append(obj)
 
-    # Phase 2: Create export groups for each mesh
+    # Phase 2: Create export groups for meshes
     export_list = []
-    
-    if include_lod:
-        # Group meshes by base name (LOD variants)
-        mesh_groups = {}
-        for mesh in meshes:
-            base = _get_base_name(mesh.name)
-            if base not in mesh_groups:
-                mesh_groups[base] = []
-            mesh_groups[base].append(mesh)
 
-        for base, group_meshes in mesh_groups.items():
-            # Sort by name to ensure consistent LOD ordering
+    if include_lod:
+        # LOD grouping mode: separate LOD meshes from regular meshes
+        lod_meshes = [m for m in meshes if _is_lod_mesh(m)]
+        regular_meshes = [m for m in meshes if not _is_lod_mesh(m)]
+
+        # Regular meshes (no _LODx suffix): each is its own independent group
+        for mesh in regular_meshes:
+            export_list.append({
+                'mesh': [mesh],
+                'active': [mesh],
+                'collision': [],
+                '_is_lod_group': False,
+            })
+
+        # LOD meshes: group by base name
+        lod_groups = {}
+        for mesh in lod_meshes:
+            base = _get_base_name(mesh.name)
+            if base not in lod_groups:
+                lod_groups[base] = []
+            lod_groups[base].append(mesh)
+
+        for base, group_meshes in lod_groups.items():
+            # Sort by name to ensure consistent LOD ordering (LOD0, LOD1, ...)
             group_meshes.sort(key=lambda m: m.name.lower())
             export_list.append({
                 'mesh': group_meshes,
-                'active': [group_meshes[0]],
+                'active': [group_meshes[0]],  # temporary; will be replaced by empty
                 'collision': [],
+                '_is_lod_group': True,
+                '_lod_base_name': base,
             })
     else:
-        # Each mesh gets its own group (independent export)
+        # Independent mode: every mesh is its own group
         for mesh in meshes:
             export_list.append({
                 'mesh': [mesh],
                 'active': [mesh],
                 'collision': [],
+                '_is_lod_group': False,
             })
 
-    # Phase 3: Match collision objects to mesh groups
+    # Phase 3: Match collision objects to mesh groups (strict matching)
     for col_obj in collisions:
         col_base = _get_base_name(col_obj.name)
-        
-        # Try to find matching mesh group
+
         matched = False
         for export_dict in export_list:
             if not export_dict.get('mesh'):
@@ -109,60 +157,57 @@ def classify_objects(selected_only, include_lod):
                 export_dict['collision'].append(col_obj)
                 matched = True
                 break
-        
+
         if not matched:
             # Orphan collision - create its own group
             export_list.append({
                 'mesh': [],
                 'active': [],
                 'collision': [col_obj],
+                '_is_lod_group': False,
             })
 
-    # Phase 4: Handle empty objects
+    # Phase 4: Handle empty objects (match by name to LOD group base)
     for empty_obj in empties:
-        # Try to match to existing group by name prefix
         matched = False
         for export_dict in export_list:
-            if export_dict.get('mesh'):
+            if export_dict.get('_is_lod_group') and export_dict.get('mesh'):
                 mesh_base = _get_base_name(export_dict['mesh'][0].name)
                 if empty_obj.name.lower() == mesh_base:
+                    # User-provided empty for LOD group - use as active
                     export_dict['active'] = [empty_obj]
+                    export_dict['_user_empty'] = True
                     matched = True
                     break
-        
+            elif export_dict.get('mesh'):
+                mesh_base = _get_base_name(export_dict['mesh'][0].name)
+                if empty_obj.name.lower() == mesh_base:
+                    if not export_dict.get('active'):
+                        export_dict['active'] = [empty_obj]
+                    matched = True
+                    break
+
         if not matched:
             # Standalone empty - create its own group
             export_list.append({
                 'mesh': [],
                 'active': [empty_obj],
                 'collision': [],
+                '_is_lod_group': False,
             })
 
-    # Phase 5: Ensure each group has an active (parent)
+    # Phase 5: Ensure each group has an active object
     for export_dict in export_list:
         if not export_dict.get('active'):
             if len(export_dict.get('mesh', [])) == 1:
                 export_dict['active'] = [export_dict['mesh'][0]]
-            elif len(export_dict.get('mesh', [])) > 1:
-                # Create an empty as LOD group parent
-                bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
-                empty_obj = bpy.context.object
-                base_name = _get_base_name(export_dict['mesh'][0].name)
-                empty_obj.name = base_name
-                empty_obj['fbx_type'] = 'LodGroup'
-                export_dict['active'] = [empty_obj]
+            elif export_dict.get('_is_lod_group'):
+                # LOD group without empty - will be created in setup_lod_groups()
+                # Keep temporary active as mesh[0] for now
+                if export_dict.get('mesh'):
+                    export_dict['active'] = [export_dict['mesh'][0]]
             elif export_dict.get('collision'):
                 export_dict['active'] = [export_dict['collision'][0]]
-
-    # Phase 6: Set LOD hierarchy (parent LOD variants to active)
-    for export_dict in export_list:
-        mesh_objects = export_dict.get('mesh', [])
-        is_lod = len(mesh_objects) > 1 or any('_lod' in m.name.lower() for m in mesh_objects)
-        if is_lod and export_dict.get('active'):
-            active_obj = export_dict['active'][0]
-            for mesh_obj in mesh_objects:
-                if mesh_obj != active_obj:
-                    mesh_obj.parent = active_obj
 
     return (True, f"Classified {len(export_list)} export groups.", export_list)
 
@@ -193,16 +238,12 @@ def separate_collision(export_list):
         original_names = [obj.name for obj in collision_objs]
         export_dict['_collision_original_names'] = original_names
 
-        # Determine base name for renaming
+        # Determine base name for renaming (use _get_base_name for LOD/UCX stripping)
         active_objs = export_dict.get('active', [])
         if active_objs:
-            base_name = active_objs[0].name
-            if base_name.lower().startswith('ucx_'):
-                base_name = base_name[4:]
+            base_name = _get_base_name(active_objs[0].name)
         elif collision_objs:
-            base_name = collision_objs[0].name
-            if base_name.lower().startswith('ucx_'):
-                base_name = base_name[4:]
+            base_name = _get_base_name(collision_objs[0].name)
         else:
             base_name = 'collision'
 
@@ -291,17 +332,151 @@ def merge_collision(export_list):
     return export_list
 
 
+def setup_lod_groups(export_list):
+    """Create Empty parents for LOD groups and set parent relationships.
+
+    For each LOD group (export_dict with '_is_lod_group'=True):
+    1. Skip if user already provided an empty (_user_empty flag)
+    2. Create an Empty named after the base name (e.g., sm_com_cube01)
+    3. Set custom property fbx_type = "LodGroup" (String type)
+    4. Parent all LOD meshes and collisions to the Empty
+    5. Preserve world transforms using matrix_parent_inverse
+    6. Save original parent and matrix_world for restoration in cleanup
+
+    Args:
+        export_list: list of export dicts
+
+    Returns:
+        list: Modified export_list with LOD empties created.
+    """
+    for export_dict in export_list:
+        if not export_dict.get('_is_lod_group'):
+            continue
+
+        # Skip if user already provided an empty
+        if export_dict.get('_user_empty'):
+            # Still need to parent meshes to the user-provided empty
+            empty_obj = export_dict['active'][0]
+            _parent_to_empty(export_dict, empty_obj)
+            continue
+
+        mesh_objects = export_dict.get('mesh', [])
+        if not mesh_objects:
+            continue
+
+        # Determine base name for empty
+        base_name = _get_base_name(mesh_objects[0].name)
+
+        # Create Empty
+        bpy.ops.object.select_all(action='DESELECT')
+        bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
+        empty_obj = bpy.context.object
+        empty_obj.name = base_name
+
+        # Set custom property fbx_type = LodGroup (String type)
+        empty_obj['fbx_type'] = 'LodGroup'
+
+        # Replace active with empty
+        export_dict['active'] = [empty_obj]
+        export_dict['_lod_empty'] = empty_obj
+
+        # Parent meshes and collisions to empty
+        _parent_to_empty(export_dict, empty_obj)
+
+    return export_list
+
+
+def _parent_to_empty(export_dict, empty_obj):
+    """Parent all meshes and collisions in a group to the empty.
+
+    Saves original parent and matrix_world for restoration.
+    Preserves world transform via matrix_parent_inverse.
+
+    Args:
+        export_dict: dict with 'mesh' and 'collision' lists
+        empty_obj: the empty to parent to
+    """
+    mesh_objects = export_dict.get('mesh', [])
+    collision_objects = export_dict.get('collision', [])
+    all_children = mesh_objects + collision_objects
+
+    original_states = []
+    for obj in all_children:
+        original_states.append({
+            'obj': obj,
+            'parent': obj.parent,
+            'matrix_world': obj.matrix_world.copy(),
+        })
+
+    # Parent objects to empty (preserving world transform)
+    for obj in all_children:
+        obj.parent = empty_obj
+        # matrix_parent_inverse compensates for parent's transform
+        # so that world transform is preserved
+        obj.matrix_parent_inverse = empty_obj.matrix_world.inverted()
+
+    export_dict['_lod_original_states'] = original_states
+
+
+def cleanup_lod_groups(export_list):
+    """Remove LOD group empties and restore original parent relationships.
+
+    For each LOD group with a created empty:
+    1. Restore original parent and matrix_world for all child objects
+    2. Delete the created empty (not user-provided empties)
+
+    Args:
+        export_list: list of export dicts
+    """
+    for export_dict in export_list:
+        if not export_dict.get('_is_lod_group'):
+            continue
+
+        original_states = export_dict.get('_lod_original_states', [])
+        empty_obj = export_dict.get('_lod_empty')
+
+        # Restore original parent and world matrix
+        for state in original_states:
+            obj = state['obj']
+            if obj is None:
+                continue
+            # Restore parent first, then world transform
+            obj.parent = state['parent']
+            obj.matrix_world = state['matrix_world']
+
+        # Delete the created empty (not user-provided empties)
+        if empty_obj is not None:
+            try:
+                bpy.ops.object.select_all(action='DESELECT')
+                empty_obj.select_set(True)
+                bpy.context.view_layer.objects.active = empty_obj
+                bpy.ops.object.delete()
+            except Exception as e:
+                print(f"  Warning: could not delete LOD empty: {e}")
+
+        # Clean up export_dict
+        export_dict.pop('_lod_empty', None)
+        export_dict.pop('_lod_original_states', None)
+
+    bpy.ops.object.select_all(action='DESELECT')
+    return export_list
+
+
 def export_fbx(export_dict, export_path, settings):
     """Export a single FBX file for one export group.
 
-    When adapt_ue_rotation is enabled:
-    - Before export: rotate all export objects +90° around Z axis
-    - After export: restore original transforms
-    - Uses axis_forward='Y' (Blender native axes)
+    LOD group export (Plan A):
+    - Include Empty (with fbx_type=LodGroup) + all LOD meshes + collisions
+    - object_types={'EMPTY', 'MESH'}, use_custom_props=True
+    - Rotation: only rotate the Empty (parent), children inherit via hierarchy
 
-    When disabled:
-    - No rotation applied
-    - Uses axis_forward='Y' (Blender native axes)
+    Regular export:
+    - Include meshes + collisions (+ optional empty)
+    - Rotation: rotate all objects individually
+
+    When adapt_ue_rotation is enabled:
+    - Before export: rotate +90° around Z axis
+    - After export: restore original transforms
 
     Args:
         export_dict: dict with 'mesh', 'active', 'collision' lists
@@ -319,17 +494,22 @@ def export_fbx(export_dict, export_path, settings):
 
     filepath = os.path.join(export_path, f"{active_objects[0].name if active_objects else 'export'}.fbx")
 
-    is_lod = any('_lod' in obj.name.lower() for obj in mesh_objects)
+    is_lod_group = export_dict.get('_is_lod_group', False)
 
     # ---- Select objects for export ----
     bpy.ops.object.select_all(action='DESELECT')
 
-    if is_lod:
-        # LOD export: only meshes, no empties
+    if is_lod_group:
+        # LOD group export (Plan A): include empty + meshes + collisions
+        # Empty has fbx_type=LodGroup custom property for UE LOD group import
+        for obj in active_objects:  # The empty (or user-provided empty)
+            obj.select_set(True)
         for obj in mesh_objects:
             obj.select_set(True)
-        object_types = {'MESH'}
-        use_custom_props = False
+        for obj in collision_objects:
+            obj.select_set(True)
+        object_types = {'EMPTY', 'MESH'}
+        use_custom_props = True  # Required for fbx_type custom property
     else:
         # Regular export: include empties (parents) + meshes + collision
         for obj in collision_objects:
@@ -342,12 +522,22 @@ def export_fbx(export_dict, export_path, settings):
         use_custom_props = settings.import_materials
 
     # Set active object
-    active_target = (mesh_objects + active_objects)[0] if (mesh_objects or active_objects) else None
+    active_target = (active_objects + mesh_objects)[0] if (active_objects or mesh_objects) else None
     if active_target:
         bpy.context.view_layer.objects.active = active_target
 
-    # ---- Collect all objects that need rotation (deduplicated) ----
+    # ---- Determine which objects need rotation ----
+    # For LOD groups: only rotate the Empty (parent). Children inherit rotation
+    # via parent hierarchy, avoiding double rotation.
+    # For regular groups: rotate all objects individually (no parent hierarchy).
     all_export_objects = list(set(mesh_objects + collision_objects + active_objects))
+
+    if is_lod_group and active_objects:
+        # LOD group: only rotate the empty (parent), children follow via hierarchy
+        rotation_objects = active_objects
+    else:
+        # Regular: rotate all objects
+        rotation_objects = all_export_objects
 
     # ---- Apply +90° Z rotation if adapt_ue_rotation is enabled ----
     original_matrices = {}
@@ -355,11 +545,11 @@ def export_fbx(export_dict, export_path, settings):
         # Save original world matrices (most reliable for restoration)
         for obj in all_export_objects:
             original_matrices[obj.name] = obj.matrix_world.copy()
-        
-        # Apply +90° Z rotation to each object
-        for obj in all_export_objects:
+
+        # Apply +90° Z rotation only to rotation_objects
+        for obj in rotation_objects:
             obj.rotation_euler.z += math.radians(90)
-        
+
         # Force view layer update to apply transformations
         bpy.context.view_layer.update()
         print("  Applied +90° Z rotation for UE adaptation")
@@ -498,6 +688,20 @@ def do_export(settings, context):
     if not export_list:
         return (False, "No objects to export.")
 
+    # ---- LOD group completeness check (only in LOD grouping mode) ----
+    # When include_lod=True (LOD grouping mode), each LOD group must have >= 2
+    # LOD meshes. A single _LODx mesh without a matching partner is an error.
+    if settings.include_lod:
+        for export_dict in export_list:
+            if export_dict.get('_is_lod_group'):
+                mesh_list = export_dict.get('mesh', [])
+                if len(mesh_list) < 2:
+                    mesh_name = mesh_list[0].name if mesh_list else "Unknown"
+                    return (False, f"{mesh_name} 没有找到对应的LOD组")
+
+    # ---- Setup LOD groups (create empties, set parent relationships) ----
+    setup_lod_groups(export_list)
+
     # ---- Separate collision objects before export ----
     separate_collision(export_list)
 
@@ -518,6 +722,9 @@ def do_export(settings, context):
 
     # ---- Merge collision objects back after export ----
     merge_collision(export_list)
+
+    # ---- Cleanup LOD groups (delete empties, restore parents) ----
+    cleanup_lod_groups(export_list)
 
     if export_failed:
         return (False, f"Export completed with errors. {len(exported_files)} file(s) exported to: {export_path}")
