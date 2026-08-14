@@ -79,6 +79,55 @@ def check_mesh_naming(obj, regex_pattern=None):
     return CheckResult(ERROR, t("Model Naming"), f"'{name}' does not match naming rule")
 
 
+def check_material_naming(obj):
+    """2.2.2 Material naming: mi_ prefix, single=match model, multi=_XX suffix.
+    For LOD models, strip _LODx suffix before extracting model middle.
+    """
+    model_name = obj.name
+    # Strip _LODx suffix for LOD models
+    check_name = re.sub(r'_LOD\d+$', '', model_name, flags=re.IGNORECASE)
+    model_middle = _get_model_middle(check_name)
+    if model_middle is None:
+        return CheckResult(ERROR, t("Material Naming"), t("Model name invalid, cannot verify"))
+
+    slots = [s for s in obj.material_slots if s.material]
+    if not slots:
+        return CheckResult(ERROR, t("Material Naming"), t("No materials"))
+
+    errors = []
+    for slot in slots:
+        mat_name = slot.material.name
+        if not mat_name.lower().startswith('mi_'):
+            errors.append(f"'{mat_name}' {t('does not start with mi_')}")
+            continue
+        mat_middle = mat_name[3:]  # remove 'mi_'
+        if len(slots) == 1:
+            if mat_middle == model_middle:
+                continue
+            else:
+                if is_chinese():
+                    errors.append(f"'{mat_name}'应为'mi_{model_middle}'")
+                else:
+                    errors.append(f"'{mat_name}' should be 'mi_{model_middle}'")
+        else:
+            m = _RE_MATERIAL_SUFFIX.search(mat_middle)
+            if not m:
+                errors.append(f"'{mat_name}' {t('missing _XX suffix')}")
+                continue
+            mat_base = mat_middle[:m.start()]
+            if mat_base == model_middle:
+                continue
+            else:
+                if is_chinese():
+                    errors.append(f"'{mat_name}'基础部分应为'mi_{model_middle}'")
+                else:
+                    errors.append(f"'{mat_name}' base should be 'mi_{model_middle}'")
+
+    if errors:
+        return CheckResult(ERROR, t("Material Naming"), "、".join(errors))
+    return CheckResult(OK, t("Material Naming"))
+
+
 def check_transform_zero(obj):
     """2.1.2 Transform zeroed: location/rotation/scale must all be zeroed"""
     loc = obj.location
@@ -251,51 +300,6 @@ def _get_model_middle(model_name):
     return rest
 
 
-def check_material_naming(obj):
-    """2.2.2 Material naming: mi_ prefix, single=match model, multi=_XX suffix"""
-    model_name = obj.name
-    model_middle = _get_model_middle(model_name)
-    if model_middle is None:
-        return CheckResult(ERROR, t("Material Naming"), t("Model name invalid, cannot verify"))
-
-    slots = [s for s in obj.material_slots if s.material]
-    if not slots:
-        return CheckResult(ERROR, t("Material Naming"), t("No materials"))
-
-    errors = []
-    for slot in slots:
-        mat_name = slot.material.name
-        if not mat_name.lower().startswith('mi_'):
-            errors.append(f"'{mat_name}' {t('does not start with mi_')}")
-            continue
-        mat_middle = mat_name[3:]  # remove 'mi_'
-        if len(slots) == 1:
-            if mat_middle == model_middle:
-                continue
-            else:
-                if is_chinese():
-                    errors.append(f"'{mat_name}'应为'mi_{model_middle}'")
-                else:
-                    errors.append(f"'{mat_name}' should be 'mi_{model_middle}'")
-        else:
-            m = _RE_MATERIAL_SUFFIX.search(mat_middle)
-            if not m:
-                errors.append(f"'{mat_name}' {t('missing _XX suffix')}")
-                continue
-            mat_base = mat_middle[:m.start()]
-            if mat_base == model_middle:
-                continue
-            else:
-                if is_chinese():
-                    errors.append(f"'{mat_name}'基础部分应为'mi_{model_middle}'")
-                else:
-                    errors.append(f"'{mat_name}' base should be 'mi_{model_middle}'")
-
-    if errors:
-        return CheckResult(ERROR, t("Material Naming"), "、".join(errors))
-    return CheckResult(OK, t("Material Naming"))
-
-
 def check_unused_materials(obj):
     """2.2.3 Unused materials: material slot exists but no face uses it"""
     if obj.type != 'MESH' or not obj.data:
@@ -320,14 +324,26 @@ def check_unused_materials(obj):
 # ============================================================
 
 def check_collision_matching(collision_objs, mesh_objs):
-    """2.3 Collision matching: UCX_ prefix must match a model name
+    """2.3 Collision matching: UCX_ prefix must match a model name (strict).
 
-    Direct:    UCX_sm_com_desk01 -> matches sm_com_desk01
-    Combined:  UCX_sm_com_desk01_01, UCX_sm_com_desk01_02, ...     (_XX)
-               UCX_sm_com_desk01_001, UCX_sm_com_desk01_002, ...   (_XXX)
-               UCX_sm_com_desk01.001, UCX_sm_com_desk01.002, ...   (.XXX Blender)
+    Strict matching rules:
+        UCX_sm_com_cube01       -> matches sm_com_cube01 (or sm_com_cube01_LOD0 etc.)
+        UCX_sm_com_cube01_01    -> only matches sm_com_cube01_01 (NOT sm_com_cube01)
+        UCX_sm_com_cube01.001   -> matches sm_com_cube01 (Blender auto-suffix stripped)
+
+    For LOD meshes, the _LODx suffix is stripped before comparison, so
+    UCX_sm_com_cube01 matches sm_com_cube01_LOD0 (base name match).
+
+    Args:
+        collision_objs: list of collision mesh objects
+        mesh_objs: list of all mesh objects (including LOD meshes)
     """
-    mesh_names = {obj.name for obj in mesh_objs}
+    # Build set of mesh base names (strip _LODx suffix for LOD meshes)
+    mesh_base_names = set()
+    for obj in mesh_objs:
+        base = re.sub(r'_LOD\d+$', '', obj.name, flags=re.IGNORECASE)
+        mesh_base_names.add(base.lower())
+
     issues = []
     for col in collision_objs:
         col_name = col.name
@@ -336,30 +352,14 @@ def check_collision_matching(collision_objs, mesh_objs):
             continue
         body = col_name[4:]  # remove 'UCX_'
 
-        # Direct match
-        if body in mesh_names:
+        # Direct match (case-insensitive)
+        if body.lower() in mesh_base_names:
             continue
 
-        # Try removing _XX suffix (combined collision, 2 digits)
-        m = re.search(r'_\d{2}$', body)
-        if m:
-            base = body[:m.start()]
-            if base in mesh_names:
-                continue
-
-        # Try removing _XXX suffix (combined collision, 3 digits)
-        m = re.search(r'_\d{3}$', body)
-        if m:
-            base = body[:m.start()]
-            if base in mesh_names:
-                continue
-
-        # Try removing .XXX suffix (Blender numeric suffix)
-        m = re.search(r'\.\d{3}$', body)
-        if m:
-            base = body[:m.start()]
-            if base in mesh_names:
-                continue
+        # Try removing Blender auto-suffix .XXX only (NOT _XX or _XXX)
+        body_stripped = re.sub(r'\.\d{3}$', '', body)
+        if body_stripped.lower() in mesh_base_names:
+            continue
 
         issues.append(f"'{col_name}' {t('no matching model')}")
 
@@ -372,26 +372,50 @@ def check_collision_matching(collision_objs, mesh_objs):
 # LOD checks (2.4)
 # ============================================================
 
-def check_lod_matching(lod_objs, mesh_objs):
-    """2.4 LOD matching: _LOD prefix must match a model name
+def check_lod_matching(lod_objs, mesh_objs, include_lod=True):
+    """2.4 LOD group completeness check.
 
-    sm_com_desk01_LOD1 -> matches sm_com_desk01
+    - When include_lod=True (LOD grouping mode): each _LODx mesh must belong
+      to a LOD group with >= 2 members of the same base name. A single LOD
+      mesh reports ERROR: "XXX 没有找到对应的LOD组".
+    - When include_lod=False (independent mode): no check (each LOD is
+      exported independently, no grouping required).
+
+    Args:
+        lod_objs: list of LOD mesh objects (with _LODx suffix)
+        mesh_objs: list of all mesh objects (for reference)
+        include_lod: bool, True=LOD grouping mode, False=independent mode
     """
-    mesh_names = {obj.name for obj in mesh_objs}
-    issues = []
+    if not include_lod:
+        # Independent mode: no LOD group check needed
+        return CheckResult(OK, t("LOD Matching"), t("Independent LOD mode"))
+
+    # Group LOD meshes by base name (case-insensitive)
+    lod_groups = {}
     for lod in lod_objs:
         lod_name = lod.name
         m = re.search(r'_LOD\d+$', lod_name, re.IGNORECASE)
         if not m:
-            issues.append(f"'{lod_name}' {t('invalid _LODx format')}")
-            continue
-        base = lod_name[:m.start()]
-        if base in mesh_names:
-            continue
-        issues.append(f"'{lod_name}' {t('no matching model')}")
+            if is_chinese():
+                return CheckResult(ERROR, t("LOD Matching"), f"'{lod_name}' 不符合_LODx格式")
+            return CheckResult(ERROR, t("LOD Matching"), f"'{lod_name}' {t('invalid _LODx format')}")
+        base = lod_name[:m.start()].lower()
+        if base not in lod_groups:
+            lod_groups[base] = []
+        lod_groups[base].append(lod)
+
+    # Check each LOD group has >= 2 members
+    issues = []
+    for base, lods in lod_groups.items():
+        if len(lods) < 2:
+            for lod in lods:
+                if is_chinese():
+                    issues.append(f"'{lod.name}' 没有找到对应的LOD组")
+                else:
+                    issues.append(f"'{lod.name}' no matching LOD group")
 
     if issues:
-        return CheckResult(WARN, t("LOD Matching"), "、".join(issues))
+        return CheckResult(ERROR, t("LOD Matching"), "、".join(issues))
     return CheckResult(OK, t("LOD Matching"))
 
 
@@ -456,11 +480,11 @@ def validate_collision(obj, collision_objs, mesh_objs, cs):
     return results
 
 
-def validate_lod(obj, lod_objs, mesh_objs, cs):
+def validate_lod(obj, lod_objs, mesh_objs, cs, include_lod=True):
     """Validate a LOD object."""
     results = []
     if cs.get('lod_matching', True):
-        result = check_lod_matching([obj], mesh_objs)
+        result = check_lod_matching([obj], mesh_objs, include_lod=include_lod)
         results.append(result)
     if cs.get('mesh_naming', True):
         results.append(check_mesh_naming(obj, cs.get('mesh_naming_regex', '')))
@@ -475,12 +499,13 @@ def validate_lod(obj, lod_objs, mesh_objs, cs):
     return results
 
 
-def validate_export_list(export_list, check_settings=None):
+def validate_export_list(export_list, check_settings=None, include_lod=True):
     """Validate all objects in the export list.
 
     Args:
         export_list: list of export dicts with 'mesh', 'collision', 'active'
         check_settings: dict of check settings (enables, thresholds)
+        include_lod: bool, True=LOD grouping mode, False=independent mode
 
     Returns:
         dict: {
@@ -585,7 +610,7 @@ def validate_export_list(export_list, check_settings=None):
         # 2.4: Check LOD matching at group level
         if lod_meshes:
             if cs.get('lod_matching', True):
-                lod_result = check_lod_matching(lod_meshes, all_mesh_objs)
+                lod_result = check_lod_matching(lod_meshes, all_mesh_objs, include_lod=include_lod)
                 group_data['group_results'].append(lod_result)
                 if lod_result.status == ERROR:
                     has_errors = True
@@ -594,7 +619,7 @@ def validate_export_list(export_list, check_settings=None):
 
             # Individual LOD checks (full mesh checks + LOD matching)
             for obj in lod_meshes:
-                results = validate_lod(obj, lod_meshes, all_mesh_objs, cs)
+                results = validate_lod(obj, lod_meshes, all_mesh_objs, cs, include_lod=include_lod)
                 group_data['lod_results'][obj.name] = results
                 for r in results:
                     if r.status == ERROR:
