@@ -444,3 +444,4 @@ class OBJECT_OT_check_settings(bpy.types.Operator):
         box.label(text=t("Group Checks"), icon='GROUP')
         box.prop(settings, "chk_collision_matching", text=t("Collision Matching"))
         box.prop(settings, "chk_lod_matching", text=t("LOD Matching"))
+
