@@ -172,7 +172,7 @@ class OBJECT_OT_export_to_ue(bpy.types.Operator):
                 self.report({'ERROR'}, t("No objects to export."))
                 return {'CANCELLED'}
 
-            _VALIDATION_DATA = validate_export_list(export_list, settings.get_check_settings())
+            _VALIDATION_DATA = validate_export_list(export_list, settings.get_check_settings(), settings.include_lod)
             _EXPORT_SETTINGS = settings
             _EXPORT_CONTEXT = context
             _DIALOG_VISIBLE = True
@@ -444,4 +444,3 @@ class OBJECT_OT_check_settings(bpy.types.Operator):
         box.label(text=t("Group Checks"), icon='GROUP')
         box.prop(settings, "chk_collision_matching", text=t("Collision Matching"))
         box.prop(settings, "chk_lod_matching", text=t("LOD Matching"))
-

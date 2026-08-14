@@ -58,6 +58,7 @@ _TRANSLATIONS = {
     "no matching model": "未找到匹配模型",
     "invalid _LODx format": "不符合_LODx格式",
     "missing _XX suffix": "缺少_XX后缀",
+    "Independent LOD mode": "独立LOD模式",
     "Has animation Action": "有动画Action",
     "Has NLA tracks": "有NLA轨道",
 
