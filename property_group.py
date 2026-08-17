@@ -150,6 +150,40 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
     import_materials: bpy.props.BoolProperty(default=True)
     import_textures: bpy.props.BoolProperty(default=True)
 
+    # ---- Update check state (hidden, used by UI) ----
+    update_available: bpy.props.BoolProperty(
+        name="Update Available",
+        description="True when a newer version is available on GitHub.",
+        default=False,
+    )
+    update_latest_version: bpy.props.StringProperty(
+        name="Latest Version",
+        default="",
+    )
+    update_download_url: bpy.props.StringProperty(
+        name="Update Download URL",
+        default="",
+        subtype="FILE_PATH",
+    )
+    update_current_version: bpy.props.StringProperty(
+        name="Current Version",
+        default="",
+    )
+    update_error: bpy.props.StringProperty(
+        name="Update Check Error",
+        default="",
+    )
+    update_checking: bpy.props.BoolProperty(
+        name="Checking",
+        description="True while an update check is in progress.",
+        default=False,
+    )
+    update_source: bpy.props.StringProperty(
+        name="Update Source",
+        description="Where the latest version info came from (release or manifest).",
+        default="",
+    )
+
     def get_check_settings(self):
         """Build a dict of check settings for validation functions."""
         return {

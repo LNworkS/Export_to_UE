@@ -86,6 +86,28 @@ _TRANSLATIONS = {
     "Please select an export path or enable Fixed Path.": "请选择导出路径或启用固定路径。",
     "No objects to export.": "没有可导出的物体。",
     "Export cancelled": "导出已取消",
+
+    # ---- Update check ----
+    "Plugin Update": "插件更新",
+    "Version": "版本",
+    "Checking for updates...": "正在检查更新...",
+    "Update check failed": "更新检查失败",
+    "Retry Check": "重试检查",
+    "New version available": "发现新版本",
+    "Update Now": "立即更新",
+    "Check Again": "重新检查",
+    "Already up to date": "已是最新版本",
+    "Not checked yet": "尚未检查",
+    "Check for Updates": "检查更新",
+
+    # ---- Update dialog ----
+    "Update Confirmation": "更新确认",
+    "Current version": "当前版本",
+    "New version": "新版本",
+    "This will download and overwrite the current installation.": "将下载并覆盖当前安装的插件。",
+    "Blender restart is recommended after update.": "更新完成后建议重启Blender。",
+    "Downloading update...": "正在下载更新...",
+    "No download URL available. Please check for updates first.": "无下载地址，请先执行检查更新。",
 }
 
 
