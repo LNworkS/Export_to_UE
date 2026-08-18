@@ -1,20 +1,9 @@
-"""Internationalization module for Export_To_UE addon.
-
-Detects Blender's language setting and provides translation between
-English and Simplified Chinese. Both Simplified Chinese (zh_HANS) and
-Traditional Chinese (zh_HANT) use Simplified Chinese translations.
-All other languages use English.
-"""
+"""i18n for Export_To_UE addon (English -> Simplified Chinese)."""
 
 import bpy
 
 
-# ============================================================
-# Translation dictionary: English -> Simplified Chinese
-# ============================================================
-
 _TRANSLATIONS = {
-    # ---- Panel & UI labels ----
     "Export to Unreal Engine": "导出到Unreal引擎",
     "FBX Export": "FBX导出",
     "Selected Objects": "选中的物体",
@@ -25,14 +14,10 @@ _TRANSLATIONS = {
     "Export to UE": "导出",
     "Export": "导出",
     "Cancel": "取消",
-
-    # ---- Property descriptions (tooltips) ----
     "Export only selected objects": "仅导出选中的物体",
     "Handle LOD groups separately": "单独处理LOD组",
-    "Apply +90\u00b0 Z rotation before export, then restore. Matches Unreal Engine coordinate system.": "导出前应用+90°Z轴旋转，导出后恢复。匹配Unreal引擎坐标系。",
+    "Apply +90° Z rotation before export, then restore. Matches Unreal Engine coordinate system.": "导出前应用+90°Z轴旋转，导出后恢复。匹配Unreal引擎坐标系。",
     "Run validation checks before export. Show results in a dialog.": "导出前运行验证检查。在对话框中显示结果。",
-
-    # ---- Validation check labels ----
     "Model Naming": "模型命名",
     "Transform Zeroed": "旋转位移缩放归零",
     "Loose Geometry": "孤立的点和线",
@@ -47,8 +32,6 @@ _TRANSLATIONS = {
     "Unused Materials": "未引用材质",
     "Collision Matching": "碰撞模型匹配",
     "LOD Matching": "LOD模型匹配",
-
-    # ---- Validation detail messages ----
     "Not a mesh object": "非网格对象",
     "None": "无",
     "Model name invalid, cannot verify": "模型名不符合规则,无法校验",
@@ -61,19 +44,13 @@ _TRANSLATIONS = {
     "Independent LOD mode": "独立LOD模式",
     "Has animation Action": "有动画Action",
     "Has NLA tracks": "有NLA轨道",
-
-    # ---- Popup dialog ----
     "Export Check Results": "导出检查结果",
     "Group Checks": "组检查",
     "Mesh": "网格",
     "Collision": "碰撞",
-
-    # ---- Check settings dialog ----
     "Check Settings": "检查设置",
     "Mesh Checks": "模型检查",
     "Material Checks": "材质检查",
-
-    # ---- Summary messages ----
     "error(s) in": "个错误，涉及",
     "group(s) - review before export": "个组 - 请检查后再导出",
     "warning(s) in": "个警告，涉及",
@@ -81,13 +58,9 @@ _TRANSLATIONS = {
     "group(s) passed checks": "个组通过检查",
     "All": "全部",
     "Found": "发现",
-
-    # ---- Report messages ----
     "Please select an export path or enable Fixed Path.": "请选择导出路径或启用固定路径。",
     "No objects to export.": "没有可导出的物体。",
     "Export cancelled": "导出已取消",
-
-    # ---- Update check ----
     "Plugin Update": "插件更新",
     "Version": "版本",
     "Checking for updates...": "正在检查更新...",
@@ -99,8 +72,6 @@ _TRANSLATIONS = {
     "Already up to date": "已是最新版本",
     "Not checked yet": "尚未检查",
     "Check for Updates": "检查更新",
-
-    # ---- Update dialog ----
     "Update Confirmation": "更新确认",
     "Current version": "当前版本",
     "New version": "新版本",
@@ -112,28 +83,11 @@ _TRANSLATIONS = {
 
 
 def is_chinese():
-    """Check if Blender's language is set to Chinese (Simplified or Traditional).
-
-    Returns True for both zh_HANS (Simplified) and zh_HANT (Traditional).
-    Returns False for all other languages.
-    """
     lang = bpy.context.preferences.view.language
     return lang.startswith('zh')
 
 
 def t(text):
-    """Translate text based on current Blender language setting.
-
-    If language is Chinese (Simplified or Traditional), returns the
-    Simplified Chinese translation from the dictionary.
-    Otherwise, returns the original English text.
-
-    Args:
-        text: English text to translate.
-
-    Returns:
-        Translated text if Chinese, original text otherwise.
-    """
     if is_chinese():
         return _TRANSLATIONS.get(text, text)
     return text

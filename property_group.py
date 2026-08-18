@@ -6,14 +6,12 @@ from .core.config import save_export_path, get_saved_export_path, load_config, s
 
 
 def get_default_export_path():
-    """Get the default export path based on current blend file location."""
     if bpy.data.filepath:
         return os.path.join(os.path.dirname(bpy.data.filepath), "BlenderExport")
     return os.path.join(os.path.expanduser("~"), "BlenderExport")
 
 
 def update_use_fixed_path(self, context):
-    """Callback when use_fixed_path toggles off - fill with saved config path."""
     if not self.use_fixed_path and not self.export_path:
         saved_path = get_saved_export_path()
         if saved_path:
@@ -21,13 +19,11 @@ def update_use_fixed_path(self, context):
 
 
 def update_export_path(self, context):
-    """Callback when export_path changes - saves to config file if not empty."""
     if self.export_path:
         save_export_path(self.export_path)
 
 
 def _save_check_settings(self, context):
-    """Callback to persist check settings to config file."""
     config = load_config()
     config['check_settings'] = {
         'mesh_naming': self.chk_mesh_naming,
@@ -51,7 +47,6 @@ def _save_check_settings(self, context):
     save_config(config)
 
 
-# UV count operator enum items
 _UV_OPERATOR_ITEMS = [
     ('<', '<', ''),
     ('<=', '<=', ''),
@@ -62,11 +57,7 @@ _UV_OPERATOR_ITEMS = [
 
 
 class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
-    """Property group for Export to UE settings.
-
-    export_path is persisted in plugin config file (not .blend file)
-    so it can be shared across multiple .blend files.
-    """
+    """Property group for Export to UE settings (incl. update-check state)."""
 
     # ---- Object Selection ----
     selected_only: bpy.props.BoolProperty(
@@ -80,10 +71,10 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
         default=False,
     )
 
-    # ---- Export Path (persisted in plugin config file, not .blend) ----
+    # ---- Export Path ----
     use_fixed_path: bpy.props.BoolProperty(
         name="Fixed Path",
-        description=t("Use default path (filepath\\BlenderExport). When disabled, path is saved in plugin config."),
+        description=t("Use default path (filepath\BlenderExport). When disabled, path is saved in plugin config."),
         default=True,
         update=update_use_fixed_path,
     )
@@ -109,8 +100,7 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
         default=True,
     )
 
-    # ---- Check Settings (persisted in config file) ----
-    # Mesh checks
+    # ---- Check Settings ----
     chk_mesh_naming: bpy.props.BoolProperty(name="Model Naming", default=True, update=_save_check_settings)
     mesh_naming_regex: bpy.props.StringProperty(
         name="Model Naming Regex",
@@ -134,45 +124,30 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
         name="UV Value", description="Value for UV count comparison", default=2, min=0, update=_save_check_settings
     )
     chk_animation: bpy.props.BoolProperty(name="Animation Data", default=True, update=_save_check_settings)
-
-    # Material checks
     chk_material_count: bpy.props.BoolProperty(name="Material Count", default=True, update=_save_check_settings)
     chk_material_naming: bpy.props.BoolProperty(name="Material Naming", default=True, update=_save_check_settings)
     chk_unused_materials: bpy.props.BoolProperty(name="Unused Materials", default=True, update=_save_check_settings)
-
-    # Group checks
     chk_collision_matching: bpy.props.BoolProperty(name="Collision Matching", default=True, update=_save_check_settings)
     chk_lod_matching: bpy.props.BoolProperty(name="LOD Matching", default=True, update=_save_check_settings)
 
-    # ---- Hidden export settings (used by export logic, not shown in UI) ----
+    # ---- Hidden export settings ----
     combine_meshes: bpy.props.BoolProperty(default=True)
     smooth_meshes: bpy.props.BoolProperty(default=True)
     import_materials: bpy.props.BoolProperty(default=True)
     import_textures: bpy.props.BoolProperty(default=True)
 
-    # ---- Update check state (hidden, used by UI) ----
+    # ---- Update check state ----
     update_available: bpy.props.BoolProperty(
         name="Update Available",
         description="True when a newer version is available on GitHub.",
         default=False,
     )
-    update_latest_version: bpy.props.StringProperty(
-        name="Latest Version",
-        default="",
-    )
+    update_latest_version: bpy.props.StringProperty(name="Latest Version", default="")
     update_download_url: bpy.props.StringProperty(
-        name="Update Download URL",
-        default="",
-        subtype="FILE_PATH",
+        name="Update Download URL", default="", subtype="FILE_PATH"
     )
-    update_current_version: bpy.props.StringProperty(
-        name="Current Version",
-        default="",
-    )
-    update_error: bpy.props.StringProperty(
-        name="Update Check Error",
-        default="",
-    )
+    update_current_version: bpy.props.StringProperty(name="Current Version", default="")
+    update_error: bpy.props.StringProperty(name="Update Check Error", default="")
     update_checking: bpy.props.BoolProperty(
         name="Checking",
         description="True while an update check is in progress.",
@@ -185,7 +160,6 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
     )
 
     def get_check_settings(self):
-        """Build a dict of check settings for validation functions."""
         return {
             'mesh_naming': self.chk_mesh_naming,
             'mesh_naming_regex': self.mesh_naming_regex,
@@ -208,7 +182,6 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
 
     @staticmethod
     def load_check_settings_from_config():
-        """Load check settings from config file and apply to scene settings."""
         config = load_config()
         check_cfg = config.get('check_settings', {})
         if not check_cfg:
