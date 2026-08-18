@@ -42,7 +42,7 @@ class VIEW3D_PT_export_to_ue(bpy.types.Panel):
         path_box = layout.box()
         path_box.label(text=t("FBX Export"), icon="FILE_FOLDER")
         path_box.prop(settings, "selected_only", text=t("Selected Objects"))
-        path_box.prop(settings, "include_lod", text=t("Independent LOD"))
+        path_box.prop(settings, "independent_lod", text=t("Independent LOD"))
         path_box.prop(settings, "adapt_ue_rotation", text=t("+90° on Z"))
         check_row = path_box.row(align=True)
         check_row.prop(settings, "check_before_export", text=t("Check"))

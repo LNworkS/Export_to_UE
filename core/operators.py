@@ -162,7 +162,7 @@ class OBJECT_OT_export_to_ue(bpy.types.Operator):
 
         if settings.check_before_export:
             success, msg, export_list = classify_objects(
-                settings.selected_only, settings.include_lod
+                settings.selected_only, settings.independent_lod
             )
             if not success:
                 self.report({'ERROR'}, msg)
@@ -172,7 +172,7 @@ class OBJECT_OT_export_to_ue(bpy.types.Operator):
                 self.report({'ERROR'}, t("No objects to export."))
                 return {'CANCELLED'}
 
-            _VALIDATION_DATA = validate_export_list(export_list, settings.get_check_settings(), settings.include_lod)
+            _VALIDATION_DATA = validate_export_list(export_list, settings.get_check_settings(), settings.independent_lod)
             _EXPORT_SETTINGS = settings
             _EXPORT_CONTEXT = context
             _DIALOG_VISIBLE = True

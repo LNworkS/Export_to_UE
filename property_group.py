@@ -65,7 +65,7 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
         description=t("Export only selected objects"),
         default=True,
     )
-    include_lod: bpy.props.BoolProperty(
+    independent_lod: bpy.props.BoolProperty(
         name="Independent LOD",
         description=t("Handle LOD groups separately"),
         default=False,
