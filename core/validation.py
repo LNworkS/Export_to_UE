@@ -372,21 +372,21 @@ def check_collision_matching(collision_objs, mesh_objs):
 # LOD checks (2.4)
 # ============================================================
 
-def check_lod_matching(lod_objs, mesh_objs, include_lod=True):
+def check_lod_matching(lod_objs, mesh_objs, independent_lod=False):
     """2.4 LOD group completeness check.
 
-    - When include_lod=True (LOD grouping mode): each _LODx mesh must belong
+    - When independent_lod=False (LOD grouping mode, default): each _LODx mesh must belong
       to a LOD group with >= 2 members of the same base name. A single LOD
       mesh reports ERROR: "XXX 没有找到对应的LOD组".
-    - When include_lod=False (independent mode): no check (each LOD is
+    - When independent_lod=True (independent mode): no check (each LOD is
       exported independently, no grouping required).
 
     Args:
         lod_objs: list of LOD mesh objects (with _LODx suffix)
         mesh_objs: list of all mesh objects (for reference)
-        include_lod: bool, True=LOD grouping mode, False=independent mode
+        independent_lod: bool, True=independent mode, False=LOD grouping mode
     """
-    if not include_lod:
+    if independent_lod:
         # Independent mode: no LOD group check needed
         return CheckResult(OK, t("LOD Matching"), t("Independent LOD mode"))
 
@@ -480,11 +480,11 @@ def validate_collision(obj, collision_objs, mesh_objs, cs):
     return results
 
 
-def validate_lod(obj, lod_objs, mesh_objs, cs, include_lod=True):
+def validate_lod(obj, lod_objs, mesh_objs, cs, independent_lod=False):
     """Validate a LOD object."""
     results = []
     if cs.get('lod_matching', True):
-        result = check_lod_matching([obj], mesh_objs, include_lod=include_lod)
+        result = check_lod_matching([obj], mesh_objs, independent_lod=independent_lod)
         results.append(result)
     if cs.get('mesh_naming', True):
         results.append(check_mesh_naming(obj, cs.get('mesh_naming_regex', '')))
@@ -499,13 +499,13 @@ def validate_lod(obj, lod_objs, mesh_objs, cs, include_lod=True):
     return results
 
 
-def validate_export_list(export_list, check_settings=None, include_lod=True):
+def validate_export_list(export_list, check_settings=None, independent_lod=False):
     """Validate all objects in the export list.
 
     Args:
         export_list: list of export dicts with 'mesh', 'collision', 'active'
         check_settings: dict of check settings (enables, thresholds)
-        include_lod: bool, True=LOD grouping mode, False=independent mode
+        independent_lod: bool, True=independent mode, False=LOD grouping mode
 
     Returns:
         dict: {
@@ -610,7 +610,7 @@ def validate_export_list(export_list, check_settings=None, include_lod=True):
         # 2.4: Check LOD matching at group level
         if lod_meshes:
             if cs.get('lod_matching', True):
-                lod_result = check_lod_matching(lod_meshes, all_mesh_objs, include_lod=include_lod)
+                lod_result = check_lod_matching(lod_meshes, all_mesh_objs, independent_lod=independent_lod)
                 group_data['group_results'].append(lod_result)
                 if lod_result.status == ERROR:
                     has_errors = True
@@ -619,7 +619,7 @@ def validate_export_list(export_list, check_settings=None, include_lod=True):
 
             # Individual LOD checks (full mesh checks + LOD matching)
             for obj in lod_meshes:
-                results = validate_lod(obj, lod_meshes, all_mesh_objs, cs, include_lod=include_lod)
+                results = validate_lod(obj, lod_meshes, all_mesh_objs, cs, independent_lod=independent_lod)
                 group_data['lod_results'][obj.name] = results
                 for r in results:
                     if r.status == ERROR:

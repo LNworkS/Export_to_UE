@@ -53,16 +53,16 @@ def _strip_lod_suffix(name):
     return re.sub(r'_lod\d+$', '', name, flags=re.IGNORECASE)
 
 
-def classify_objects(selected_only, include_lod):
+def classify_objects(selected_only, independent_lod):
     """Classify selected objects into export groups.
 
     Grouping logic:
-    - include_lod=True (LOD grouping mode):
+    - independent_lod=False (LOD grouping mode, default):
       * Meshes WITHOUT _LODx suffix: each becomes its own independent group.
       * Meshes WITH _LODx suffix: grouped by base name (e.g., sm_com_cube01_LOD0
         and sm_com_cube01_LOD1 form one LOD group).
       * Single-LOD groups (only 1 _LODx mesh) are flagged for error reporting.
-    - include_lod=False (independent mode):
+    - independent_lod=True (independent mode):
       * Every mesh becomes its own group, no LOD grouping.
 
     Collision matching (strict):
@@ -72,7 +72,7 @@ def classify_objects(selected_only, include_lod):
 
     Args:
         selected_only: bool - Export only selected objects
-        include_lod: bool - True=LOD grouping mode, False=independent mode
+        independent_lod: bool - True=independent mode, False=LOD grouping mode
 
     Returns:
         tuple: (success: bool, message: str, export_list: list)
@@ -102,7 +102,7 @@ def classify_objects(selected_only, include_lod):
     # Phase 2: Create export groups for meshes
     export_list = []
 
-    if include_lod:
+    if not independent_lod:
         # LOD grouping mode: separate LOD meshes from regular meshes
         lod_meshes = [m for m in meshes if _is_lod_mesh(m)]
         regular_meshes = [m for m in meshes if not _is_lod_mesh(m)]
@@ -680,7 +680,7 @@ def do_export(settings, context):
 
     # ---- Classify objects ----
     success, msg, export_list = classify_objects(
-        settings.selected_only, settings.include_lod
+        settings.selected_only, settings.independent_lod
     )
     if not success:
         return (False, msg)
@@ -689,9 +689,9 @@ def do_export(settings, context):
         return (False, "No objects to export.")
 
     # ---- LOD group completeness check (only in LOD grouping mode) ----
-    # When include_lod=True (LOD grouping mode), each LOD group must have >= 2
+    # When independent_lod=False (LOD grouping mode), each LOD group must have >= 2
     # LOD meshes. A single _LODx mesh without a matching partner is an error.
-    if settings.include_lod:
+    if not settings.independent_lod:
         for export_dict in export_list:
             if export_dict.get('_is_lod_group'):
                 mesh_list = export_dict.get('mesh', [])
