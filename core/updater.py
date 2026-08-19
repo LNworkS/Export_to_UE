@@ -84,6 +84,32 @@ PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST_PATH = os.path.join(PLUGIN_DIR, "blender_manifest.toml")
 
 
+def _detect_current_repo():
+    """Detect which extension repository this add-on is installed in.
+
+    bpy.ops.extensions.package_install_files requires the repo *module*
+    identifier (e.g. 'user_default'), not the display name. The installed
+    directory is matched against each repo's `directory` root.
+
+    Returns:
+        str: repo module identifier, or 'user_default' as a safe fallback.
+    """
+    try:
+        current_dir = os.path.abspath(PLUGIN_DIR)
+        for repo in bpy.context.preferences.extensions.repos:
+            repo_dir = getattr(repo, 'directory', '')
+            if repo_dir:
+                repo_root = os.path.abspath(repo_dir)
+                if current_dir.lower().startswith(repo_root.lower()):
+                    module = getattr(repo, 'module', '')
+                    if module:
+                        print(f"Export to UE: detected install repo '{module}' ({repo_root})")
+                        return module
+    except Exception as e:
+        print(f"Export to UE: repo detection failed, using 'user_default': {e}")
+    return 'user_default'
+
+
 # ============================================================
 # Version parsing & comparison
 # ============================================================
@@ -544,12 +570,16 @@ def download_and_install(zip_url, progress_callback=None):
         if not os.path.exists(tmp_zip) or os.path.getsize(tmp_zip) == 0:
             return False, "Downloaded file is empty or missing"
 
-        # Install via Blender extension operator (forward slashes for Blender)
+        # Install via Blender extension operator (forward slashes for Blender).
+        # The repo is auto-detected (must be the repo this add-on lives in,
+        # e.g. 'user_default'); hardcoding 'blender_org' would install the
+        # update into the wrong repository and never overwrite this install.
         install_path = tmp_zip.replace('\\', '/')
+        repo_module = _detect_current_repo()
         try:
             result = bpy.ops.extensions.package_install_files(
                 filepath=install_path,
-                repo='blender_org',
+                repo=repo_module,
                 enable_on_install=True,
                 overwrite=True,
             )

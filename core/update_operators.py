@@ -5,8 +5,13 @@ import bpy
 from ..i18n import t
 from .updater import check_for_update, download_and_install, get_current_version_str
 
-# Reference to the package-level thread launcher. Set in package __init__.
-# Imported lazily to avoid circular import.
+
+def _get_update_settings():
+    """Return the scene's update property group (created by the package)."""
+    scene = bpy.context.scene
+    if not hasattr(scene, 'update_settings'):
+        return None
+    return scene.update_settings
 
 
 def _apply_result_to_scene(result):
@@ -14,10 +19,9 @@ def _apply_result_to_scene(result):
 
     Safe to call from operators running on the main thread.
     """
-    scene = bpy.context.scene
-    if not hasattr(scene, 'export_to_ue_settings'):
+    settings = _get_update_settings()
+    if settings is None:
         return
-    settings = scene.export_to_ue_settings
     settings.update_available = bool(result.get('has_update'))
     settings.update_latest_version = result.get('latest_version') or ''
     settings.update_download_url = result.get('download_url') or ''
@@ -43,8 +47,6 @@ class OBJECT_OT_check_update(bpy.types.Operator):
     _ticks = 0
 
     def invoke(self, context, event):
-        settings = context.scene.export_to_ue_settings
-
         # Lazy import to avoid circular import (package imports operators).
         from .. import start_background_update_check
         start_background_update_check(force=True)
@@ -60,7 +62,11 @@ class OBJECT_OT_check_update(bpy.types.Operator):
             return {'PASS_THROUGH'}
 
         self._ticks += 1
-        settings = context.scene.export_to_ue_settings
+        settings = _get_update_settings()
+        if settings is None:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+            return {'FINISHED'}
         done = (not settings.update_checking) and (self._ticks > 2 or not self._last_state_checking)
 
         # Give UI a chance to show "Checking..." for at least ~1 tick.
@@ -115,21 +121,20 @@ class OBJECT_OT_perform_update(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        settings = context.scene.export_to_ue_settings
+        settings = _get_update_settings()
+        if settings is None:
+            return False
         return bool(getattr(settings, 'update_download_url', ''))
 
     def invoke(self, context, event):
-        settings = context.scene.export_to_ue_settings
-        latest = settings.update_latest_version or 'unknown'
-        current = settings.update_current_version or get_current_version_str()
         # Confirmation dialog
         return context.window_manager.invoke_props_dialog(self, width=400)
 
     def draw(self, context):
-        settings = context.scene.export_to_ue_settings
+        settings = _get_update_settings()
         layout = self.layout
-        latest = settings.update_latest_version or 'unknown'
-        current = settings.update_current_version or get_current_version_str()
+        latest = settings.update_latest_version if settings else 'unknown'
+        current = settings.update_current_version if settings else get_current_version_str()
         col = layout.column()
         col.label(text=t("Update Confirmation"), icon='WORLD')
         col.label(text=f"{t('Current version')}: {current}")
@@ -139,7 +144,10 @@ class OBJECT_OT_perform_update(bpy.types.Operator):
         col.label(text=t("Blender restart is recommended after update."))
 
     def execute(self, context):
-        settings = context.scene.export_to_ue_settings
+        settings = _get_update_settings()
+        if settings is None:
+            self.report({'ERROR'}, t("No download URL available. Please check for updates first."))
+            return {'CANCELLED'}
         url = settings.update_download_url
         if not url:
             self.report({'ERROR'}, t("No download URL available. Please check for updates first."))

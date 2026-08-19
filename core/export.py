@@ -1,11 +1,6 @@
 import bpy
 import os
-import json
 import math
-import mathutils
-
-from .coordinate import apply_transform_to_ue, sanitize_vector
-from .texture_export import get_ue_parent_material
 
 
 def _get_base_name(obj_name):
@@ -53,6 +48,15 @@ def _strip_lod_suffix(name):
     return re.sub(r'_lod\d+$', '', name, flags=re.IGNORECASE)
 
 
+def _is_collision_object(obj):
+    """Return True if obj is a collision mesh (name starts with 'ucx_').
+
+    Naming rule is unified to the 'ucx_' prefix (with underscore) everywhere,
+    matching the validation checks.
+    """
+    return obj.type == 'MESH' and obj.name.lower().startswith('ucx_')
+
+
 def classify_objects(selected_only, independent_lod):
     """Classify selected objects into export groups.
 
@@ -91,11 +95,10 @@ def classify_objects(selected_only, independent_lod):
     empties = []
 
     for obj in selected_objects:
-        if obj.type == 'MESH':
-            if len(obj.name) >= 3 and obj.name[0:3].lower() == 'ucx':
-                collisions.append(obj)
-            else:
-                meshes.append(obj)
+        if _is_collision_object(obj):
+            collisions.append(obj)
+        elif obj.type == 'MESH':
+            meshes.append(obj)
         elif obj.type == 'EMPTY':
             empties.append(obj)
 
@@ -473,6 +476,8 @@ def export_fbx(export_dict, export_path, settings):
     Regular export:
     - Include meshes + collisions (+ optional empty)
     - Rotation: rotate all objects individually
+    - use_custom_props controlled by settings.use_custom_props (independent of
+      material import settings).
 
     When adapt_ue_rotation is enabled:
     - Before export: rotate +90° around Z axis
@@ -519,7 +524,7 @@ def export_fbx(export_dict, export_path, settings):
         for obj in mesh_objects:
             obj.select_set(True)
         object_types = {'EMPTY', 'MESH'}
-        use_custom_props = settings.import_materials
+        use_custom_props = settings.use_custom_props
 
     # Set active object
     active_target = (active_objects + mesh_objects)[0] if (active_objects or mesh_objects) else None
@@ -584,79 +589,31 @@ def export_fbx(export_dict, export_path, settings):
     return (True, filepath)
 
 
-def build_bridge_payload(export_dict, export_name, settings):
-    """Build a payload for UE bridge connection.
-
-    Args:
-        export_dict: dict with object lists
-        export_name: str - name of the export group
-        settings: ExportToUEPropertyGroup
-
-    Returns:
-        dict - JSON-serializable payload
-    """
-    mesh_objects = export_dict.get('mesh', [])
-    collision_objects = export_dict.get('collision', [])
-
-    payload = {
-        "type": "blender_export",
-        "version": "1.0",
-        "export_name": export_name,
-        "timestamp": bpy.app.frame,
-        "meshes": [],
-        "collisions": [],
-        "materials": {},
-        "settings": {
-            "combine_meshes": settings.combine_meshes,
-            "smooth_shading": settings.smooth_meshes,
-            "import_materials": settings.import_materials,
-            "import_textures": settings.import_textures,
-        }
-    }
-
-    # Add mesh data
-    for obj in mesh_objects:
-        if obj.type == 'MESH' and obj.data:
-            loc, rot, scale = apply_transform_to_ue(obj)
-            payload["meshes"].append({
-                "name": obj.name,
-                "location": [loc.x, loc.y, loc.z],
-                "rotation": [rot.x, rot.y, rot.z],
-                "scale": [scale.x, scale.y, scale.z],
-                "vertex_count": len(obj.data.vertices),
-                "material_slots": [ms.material.name if ms.material else "None"
-                                    for ms in obj.material_slots],
-            })
-
-    # Add collision data
-    for obj in collision_objects:
-        if obj.type == 'MESH' and obj.data:
-            loc, rot, scale = apply_transform_to_ue(obj)
-            payload["collisions"].append({
-                "name": obj.name,
-                "location": [loc.x, loc.y, loc.z],
-                "rotation": [rot.x, rot.y, rot.z],
-                "scale": [scale.x, scale.y, scale.z],
-                "vertex_count": len(obj.data.vertices),
-            })
-
-    # Add material mapping
-    for obj in mesh_objects:
-        if obj.type == 'MESH':
-            for ms in obj.material_slots:
-                mat = ms.material
-                if mat and mat.name not in payload["materials"]:
-                    ue_parent = get_ue_parent_material(mat)
-                    payload["materials"][mat.name] = {
-                        "ue_parent": ue_parent,
-                        "textures": [],
-                    }
-
-    return payload
+def _restore_selection(saved_selection, saved_active):
+    """Restore the scene selection state (selection + active object)."""
+    try:
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in saved_selection:
+            try:
+                obj.select_set(True)
+            except Exception:
+                pass
+        if saved_active is not None:
+            try:
+                bpy.context.view_layer.objects.active = saved_active
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def do_export(settings, context):
     """Main export function.
+
+    The whole pipeline is wrapped in try/finally so that even if an FBX
+    export or a scene operation fails midway, collision objects are merged
+    back and temporary LOD empties are cleaned up, and the user's selection
+    state is restored.
 
     Args:
         settings: ExportToUEPropertyGroup
@@ -666,6 +623,10 @@ def do_export(settings, context):
         tuple: (success: bool, message: str)
     """
     scene = context.scene
+
+    # Save user's selection state before we start mutating the scene.
+    saved_selection = [obj for obj in scene.objects if obj.select_get()]
+    saved_active = context.view_layer.objects.active
 
     # ---- Determine export path ----
     # Lazy import to avoid circular dependency at module load time
@@ -699,32 +660,52 @@ def do_export(settings, context):
                     mesh_name = mesh_list[0].name if mesh_list else "Unknown"
                     return (False, f"{mesh_name} 没有找到对应的LOD组")
 
-    # ---- Setup LOD groups (create empties, set parent relationships) ----
-    setup_lod_groups(export_list)
-
-    # ---- Separate collision objects before export ----
-    separate_collision(export_list)
-
-    # ---- Process each export group ----
+    # ---- Export pipeline with guaranteed cleanup ----
     exported_files = []
     export_failed = False
+    error_message = None
 
-    for export_dict in export_list:
-        if not export_dict.get('mesh') and not export_dict.get('collision'):
-            continue
+    try:
+        # ---- Setup LOD groups (create empties, set parent relationships) ----
+        setup_lod_groups(export_list)
 
-        # Export as FBX file
-        success, filepath = export_fbx(export_dict, export_path, settings)
-        if success:
-            exported_files.append(filepath)
-        else:
-            export_failed = True
+        # ---- Separate collision objects before export ----
+        separate_collision(export_list)
 
-    # ---- Merge collision objects back after export ----
-    merge_collision(export_list)
+        # ---- Process each export group ----
+        for export_dict in export_list:
+            if not export_dict.get('mesh') and not export_dict.get('collision'):
+                continue
 
-    # ---- Cleanup LOD groups (delete empties, restore parents) ----
-    cleanup_lod_groups(export_list)
+            # Export as FBX file
+            success, filepath = export_fbx(export_dict, export_path, settings)
+            if success:
+                exported_files.append(filepath)
+            else:
+                export_failed = True
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        export_failed = True
+        error_message = f"Export error: {e}"
+    finally:
+        # ---- ALWAYS merge collision objects back after export ----
+        try:
+            merge_collision(export_list)
+        except Exception as e:
+            print(f"Export to UE: warning - merge_collision failed: {e}")
+
+        # ---- ALWAYS cleanup LOD groups (delete empties, restore parents) ----
+        try:
+            cleanup_lod_groups(export_list)
+        except Exception as e:
+            print(f"Export to UE: warning - cleanup_lod_groups failed: {e}")
+
+        # ---- ALWAYS restore the user's selection state ----
+        _restore_selection(saved_selection, saved_active)
+
+    if error_message:
+        return (False, f"{error_message} ({len(exported_files)} file(s) exported to: {export_path})")
 
     if export_failed:
         return (False, f"Export completed with errors. {len(exported_files)} file(s) exported to: {export_path}")

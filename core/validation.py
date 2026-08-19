@@ -481,14 +481,22 @@ def validate_collision(obj, collision_objs, mesh_objs, cs):
 
 
 def validate_lod(obj, lod_objs, mesh_objs, cs, independent_lod=False):
-    """Validate a LOD object."""
+    """Validate a LOD object.
+
+    Note: LOD group matching (check_lod_matching) is intentionally NOT run
+    here per LOD mesh — it is evaluated once at group level in
+    validate_export_list(). Running it per member would duplicate the same
+    error for every LOD mesh.
+
+    In LOD grouping mode (independent_lod=False) the LOD meshes are parented
+    under a group Empty during export, so their local transform offsets are
+    legitimate and Transform Zeroed would report false positives. The check is
+    therefore only applied when independent_lod=True (each LOD exported alone).
+    """
     results = []
-    if cs.get('lod_matching', True):
-        result = check_lod_matching([obj], mesh_objs, independent_lod=independent_lod)
-        results.append(result)
     if cs.get('mesh_naming', True):
         results.append(check_mesh_naming(obj, cs.get('mesh_naming_regex', '')))
-    if cs.get('transform_zero', True):
+    if independent_lod and cs.get('transform_zero', True):
         results.append(check_transform_zero(obj))
     if cs.get('loose_geometry', True):
         results.append(check_loose_geometry(obj))

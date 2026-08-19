@@ -4,9 +4,9 @@ schema_version = "1.0.0"
 # https://docs.blender.org/manual/en/latest/advanced/extensions/getting_started.html
 
 id = "export_to_ue"
-version = "0.1.1"
+version = "0.2.0"
 name = "Export To UE"
-tagline = "Export models to Unreal Engine with proper FBX settings"
+tagline = "Export models to Unreal Engine with proper FBX settings and save to .max via 3ds Max batch"
 maintainer = "BI1MCS"
 type = "add-on"
 
@@ -22,7 +22,8 @@ license = [
 website = "https://extensions.blender.org/add-ons/export-to-ue/"
 
 [permissions]
-files = "Export FBX files to disk and read/write plugin config"
+files = "Export FBX files to disk, save .max files, and read/write plugin config"
+subprocess = "Invoke 3dsmaxbatch.exe to convert FBX to .max files"
 
 [build]
 paths_exclude_pattern = [
