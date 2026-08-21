@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 
 from ..i18n import t
+from .max_version import detect_installed_max_versions
 
 
 # Base meters for each 3ds Max System Unit type (1 unit = X meters).
@@ -83,10 +84,8 @@ def find_3dsmaxbatch():
     1. The path configured in the Save as .Max panel (plugin settings).
        A configured path that is missing or empty (0 bytes, e.g. a stale
        placeholder) is ignored and falls through to auto-detection.
-    2. Common Autodesk install locations (read-only auto-detection; the
-       Save to .MAX export side still requires an explicit path because
-       writing files must never guess, but reading units is side-effect
-       free so probing known paths is safe).
+    2. Auto-detected installs, choosing the NEWEST version (multiple 3ds
+       Max installs are common; an older exe cannot open newer .max files).
 
     Returns an absolute path string, or None when not found.
     """
@@ -105,24 +104,39 @@ def find_3dsmaxbatch():
     except Exception:
         pass
 
-    # 2) Auto-detect from common install locations (read-only).
-    import glob
-    patterns = []
-    for drive in 'CDEFGH':
-        patterns.extend([
-            f"{drive}:\\Program Files\\Autodesk\\3ds Max *\\3dsmaxbatch.exe",
-            f"{drive}:\\Program Files (x86)\\Autodesk\\3ds Max *\\3dsmaxbatch.exe",
-            f"{drive}:\\3ds Max *\\3dsmaxbatch.exe",
-            f"{drive}:\\Autodesk\\3ds Max *\\3dsmaxbatch.exe",
-        ])
-    for pattern in patterns:
-        try:
-            for match in sorted(glob.glob(pattern)):
-                if _is_valid_exe(match):
-                    return match
-        except Exception:
-            continue
+    # 2) Auto-detect: newest installed version (read-only probe).
+    installed = detect_installed_max_versions()
+    if installed:
+        return installed[-1]['path']
     return None
+
+
+def find_all_3dsmaxbatch():
+    """All usable 3dsmaxbatch.exe installs, best first.
+
+    The user-configured path (when valid) comes first, then every
+    auto-detected install sorted newest to oldest. Each entry is a dict:
+        {'path': <exe>, 'year': <int>, 'version': <int>}
+    Returns an empty list when nothing is usable.
+    """
+    entries = []
+    seen = set()
+    try:
+        import bpy
+        scene = bpy.context.scene
+        if scene is not None and hasattr(scene, 'save_to_max_settings'):
+            cfg = scene.save_to_max_settings.max_exe_path
+            for candidate in (bpy.path.abspath(cfg) if cfg else '', cfg or ''):
+                if candidate and _is_valid_exe(candidate):
+                    entries.append({'path': candidate, 'year': 0, 'version': 0})
+                    seen.add(candidate)
+                    break
+    except Exception:
+        pass
+    for entry in reversed(detect_installed_max_versions()):
+        if entry['path'] not in seen:
+            entries.append(entry)
+    return entries
 
 
 # ============================================================
@@ -297,6 +311,49 @@ def read_max_file_units(max_file, max_exe=None, timeout_sec=120):
         }
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def read_max_file_units_best(max_file, candidates=None, timeout_sec=120):
+    """Read units, trying several 3dsmaxbatch.exe installs in order.
+
+    Each candidate is tried until one reports a valid unit. When a
+    candidate fails to load the file (e.g. the .max file is newer than
+    that 3ds Max), the next one is attempted instead of giving up.
+
+    Args:
+        max_file: absolute path to the .max file
+        candidates: ordered list of exe paths (default: every detected
+            install, newest first; user-configured path first when valid)
+        timeout_sec: per-attempt subprocess timeout
+
+    Returns:
+        dict as _parse_result(). `ok` True on the first success. When all
+        candidates fail, the LAST result is returned with `error` appended
+        a note about how many installs were tried.
+    """
+    if not candidates:
+        candidates = [e['path'] for e in find_all_3dsmaxbatch()]
+    if not candidates:
+        return {
+            'ok': False, 'system_type': '', 'system_scale': 1.0,
+            'display_type': '', 'meters_per_unit': None,
+            'error': t("3ds Max not found. Please select the unit manually."),
+        }
+    last = None
+    for exe in candidates:
+        last = read_max_file_units(max_file, exe, timeout_sec)
+        if last.get('ok'):
+            return last
+    if last is None:
+        last = {
+            'ok': False, 'system_type': '', 'system_scale': 1.0,
+            'display_type': '', 'meters_per_unit': None,
+            'error': t("Failed to read the .max file"),
+        }
+    elif len(candidates) > 1:
+        note = t("Tried {n} 3ds Max install(s)").format(n=len(candidates))
+        last['error'] = f"{last.get('error', '')} ({note})".strip()
+    return last
 
 
 # ============================================================

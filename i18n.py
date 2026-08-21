@@ -123,6 +123,9 @@ _TRANSLATIONS = {
     "File not found": "文件不存在",
     "3ds Max not found. Please select the unit manually.": "未找到 3ds Max。请手动选择单位。",
     "3ds Max failed to read the file": "3ds Max 读取文件失败",
+    "File saved by 3ds Max {year} (v{ver})": "该文件由 3ds Max {year} (v{ver}) 保存",
+    "The .max file needs 3ds Max {year} or newer to read its units": "读取该文件单位需要 3ds Max {year} 或更高版本，请手动选择单位",
+    "Tried {n} 3ds Max install(s)": "已尝试 {n} 个 3ds Max 安装版本",
     # ---- Help module ----
     "Export To UE - Help": "Export To UE - 帮助",
     "1. Export to UE (FBX)": "1. 导出到 UE (FBX)",

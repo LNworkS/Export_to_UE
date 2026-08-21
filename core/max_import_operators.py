@@ -38,6 +38,11 @@ from .max_units import (
     read_max_file_units,
     unit_label,
 )
+from .max_version import (
+    detect_installed_max_versions,
+    pick_3dsmax_for_file,
+    read_max_file_version,
+)
 
 # Unit choices shown in the confirmation dialog. 'AUTO' means "use the
 # automatically detected file unit" (only valid when detection succeeded).
@@ -123,6 +128,7 @@ class IMPORT_OT_max_with_units(bpy.types.Operator, ImportHelper):
 
     # Internal stage state (survives between the two execute calls).
     _unit_info = None      # result dict from read_max_file_units()
+    _file_version_info = None  # dict from read_max_file_version()
     _stage = 0             # 0 = not confirmed, 1 = dialog confirmed
 
     # ============================================================
@@ -136,20 +142,16 @@ class IMPORT_OT_max_with_units(bpy.types.Operator, ImportHelper):
 
     def execute(self, context):
         if self._stage == 0:
-            # ---- Stage 1: read units, then show the confirmation dialog ----
+            # ---- Stage 1: detect version, read units, confirm ----
             paths = self._target_paths()
             if not paths or not os.path.isfile(paths[0]):
                 self.report({'ERROR'}, t("Please select a .max file."))
                 return {'CANCELLED'}
 
-            info = None
-            max_exe = find_3dsmaxbatch()
-            if max_exe:
-                context.window.cursor_set('WAIT')
-                try:
-                    info = read_max_file_units(paths[0], max_exe)
-                finally:
-                    context.window.cursor_set('DEFAULT')
+            # Version detection is pure binary parsing (~1 ms, no 3ds Max
+            # launch) and lets us pick a 3dsmaxbatch that can open the file.
+            self._file_version_info = read_max_file_version(paths[0])
+            info = self._read_units_with_version_match(paths[0])
 
             self._unit_info = info
             # Default the dropdown: AUTO when detected, centimeters otherwise.
@@ -170,6 +172,79 @@ class IMPORT_OT_max_with_units(bpy.types.Operator, ImportHelper):
             )
             return {'CANCELLED'}
         return self._do_import(context, factor)
+
+    def _read_units_with_version_match(self, max_file):
+        """Read units, preferring a 3ds Max that can open this file.
+
+        Strategy:
+        1. Match the file's version against installed 3ds Max versions;
+           use the closest install >= file version (older exes cannot open
+           newer .max files).
+        2. When every install is older than the file (or no version was
+           detected), try the newest install anyway.
+        3. On failure, re-scan the install registry (it may be stale) and
+           retry every untried install.
+        """
+        context = bpy.context
+        installed = detect_installed_max_versions()
+        file_year = (self._file_version_info or {}).get('year')
+        best = None
+        tried = set()
+
+        info = None
+        context.window.cursor_set('WAIT')
+        try:
+            if not installed:
+                return None
+
+            if file_year:
+                best = pick_3dsmax_for_file(installed, file_year)
+                if best:
+                    info = read_max_file_units(max_file, best['path'])
+                    tried.add(best['path'])
+                else:
+                    # No install is new enough -> the newest still gets one
+                    # attempt (defensive; 3ds Max may open it in practice).
+                    newest = installed[-1]['path']
+                    info = read_max_file_units(max_file, newest)
+                    tried.add(newest)
+            else:
+                fallback_exe = find_3dsmaxbatch()
+                if fallback_exe:
+                    info = read_max_file_units(max_file, fallback_exe)
+                    tried.add(fallback_exe)
+
+            if not (info and info.get('ok')):
+                # Fresh re-scan + retry every untried install.
+                for entry in detect_installed_max_versions():
+                    if entry['path'] in tried:
+                        continue
+                    attempt = read_max_file_units(max_file, entry['path'])
+                    tried.add(entry['path'])
+                    if attempt.get('ok'):
+                        info = attempt
+                        break
+                    info = attempt
+                # Last resort: the user-configured exe, which may live
+                # outside the auto-detected install locations.
+                cfg_exe = find_3dsmaxbatch()
+                if (cfg_exe and cfg_exe not in tried
+                        and not (info and info.get('ok'))):
+                    attempt = read_max_file_units(max_file, cfg_exe)
+                    tried.add(cfg_exe)
+                    if attempt.get('ok'):
+                        info = attempt
+        finally:
+            context.window.cursor_set('DEFAULT')
+
+        if info is None:
+            return None
+        # Helpful note when the file is simply too new for this computer.
+        if not info.get('ok') and file_year:
+            required = self._file_version_info['version']
+            info['error'] = t("The .max file needs 3ds Max {year} or newer "
+                              "to read its units").format(year=file_year)
+        return info
 
     # ============================================================
     # Scale factor
@@ -246,6 +321,13 @@ class IMPORT_OT_max_with_units(bpy.types.Operator, ImportHelper):
         blender_mpu = blender_meters_per_unit(context.scene)
 
         box = layout.box()
+        fv = self._file_version_info
+        if fv and fv.get('year'):
+            box.label(
+                text=t("File saved by 3ds Max {year} (v{ver})").format(
+                    year=fv['year'], ver=fv['version']),
+                icon='FILE_TICK',
+            )
         if info and info.get('ok'):
             row = box.row()
             row.label(text=t("Detected Max file unit"), icon='CHECKMARK')

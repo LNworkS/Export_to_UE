@@ -20,9 +20,10 @@ Blender 5.x 扩展：将模型导出到 Unreal Engine（FBX），通过 3dsmaxba
 ### 3. Import Max with Units（导入 .max 并换算单位）
 - 入口：`File > Import > Autodesk MAX (.max) with Units`
 - 自动读取 .max 文件的系统单位（通过 3dsmaxbatch.exe + MaxScript `loadMaxFile ... useFileUnits:true`，可靠且跳过单位弹窗）
+- 导入前先二进制解析 .max 文件版本（毫秒级，无需启动 3ds Max），自动匹配本机 ≥ 文件版本的最接近 3ds Max 安装来读取单位（旧版 3ds Max 无法打开新版 .max 文件）；无匹配时重扫安装列表重试
 - 与 Blender 场景单位（`Scene > Units`）比较后自动计算缩放系数，导入时应用
-- 导入前弹出确认对话框：显示检测到的 Max 文件单位、Blender 场景单位与缩放系数，可手动覆盖
-- 未安装 3ds Max 或读取失败时，可在对话框中手动选择单位
+- 导入前弹出确认对话框：显示检测到的文件版本、Max 文件单位、Blender 场景单位与缩放系数，可手动覆盖
+- 未安装 3ds Max、文件版本高于本机所有安装或读取失败时，可在对话框中手动选择单位
 - 例：Max 中 100 cm 的模型，导入 1 unit = 1 m 的 Blender 场景后正确显示为 1 m
 
 ### 4. Plugin Update
@@ -39,7 +40,7 @@ Blender 5.x 扩展：将模型导出到 Unreal Engine（FBX），通过 3dsmaxba
 ## 3ds Max 配置
 
 - `Save as .Max` 面板 → 齿轮图标 → 配置 `3dsmaxbatch.exe` 路径（如 `G:\Program Files\Autodesk\3ds Max 2024\3dsmaxbatch.exe`）
-- Import Max 单位读取优先使用该配置；未配置时自动探测常见安装路径
+- Import Max 单位读取优先使用该配置；未配置时自动探测常见安装路径，多版本时按"文件版本匹配 → 最近更高版本"选择，无版本信息时选用最新安装
 
 ## 单位换算原理
 
