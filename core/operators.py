@@ -355,6 +355,8 @@ class OBJECT_OT_check_settings(bpy.types.Operator):
         row.prop(settings, "uv_count_value", text="")
 
         box.prop(settings, "chk_animation", text=t("Animation Data"))
+        box.prop(settings, "chk_non_manifold", text=t("Non-Manifold"))
+        box.prop(settings, "chk_smooth_shading", text=t("Smooth Shading"))
 
         # ---- Material checks ----
         box = layout.box()
@@ -368,4 +370,5 @@ class OBJECT_OT_check_settings(bpy.types.Operator):
         box.label(text=t("Group Checks"), icon='GROUP')
         box.prop(settings, "chk_collision_matching", text=t("Collision Matching"))
         box.prop(settings, "chk_lod_matching", text=t("LOD Matching"))
+        box.prop(settings, "chk_transparency_separation", text=t("Transparency Separation"))
 

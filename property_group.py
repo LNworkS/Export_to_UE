@@ -47,10 +47,13 @@ def _save_check_settings(self, context):
         'uv_count_operator': self.uv_count_operator,
         'uv_count_value': self.uv_count_value,
         'animation': self.chk_animation,
+        'non_manifold': self.chk_non_manifold,
+        'smooth_shading': self.chk_smooth_shading,
         'material_count': self.chk_material_count,
         'material_naming': self.chk_material_naming,
         'unused_materials': self.chk_unused_materials,
         'collision_matching': self.chk_collision_matching,
+        'transparency_separation': self.chk_transparency_separation,
         'lod_matching': self.chk_lod_matching,
     }
     save_config(config)
@@ -133,10 +136,13 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
         name="UV Value", description="Value for UV count comparison", default=2, min=0, update=_save_check_settings
     )
     chk_animation: bpy.props.BoolProperty(name="Animation Data", default=True, update=_save_check_settings)
+    chk_non_manifold: bpy.props.BoolProperty(name="Non-Manifold", default=True, update=_save_check_settings)
+    chk_smooth_shading: bpy.props.BoolProperty(name="Smooth Shading", default=True, update=_save_check_settings)
     chk_material_count: bpy.props.BoolProperty(name="Material Count", default=True, update=_save_check_settings)
     chk_material_naming: bpy.props.BoolProperty(name="Material Naming", default=True, update=_save_check_settings)
     chk_unused_materials: bpy.props.BoolProperty(name="Unused Materials", default=True, update=_save_check_settings)
     chk_collision_matching: bpy.props.BoolProperty(name="Collision Matching", default=True, update=_save_check_settings)
+    chk_transparency_separation: bpy.props.BoolProperty(name="Transparency Separation", default=True, update=_save_check_settings)
     chk_lod_matching: bpy.props.BoolProperty(name="LOD Matching", default=True, update=_save_check_settings)
 
     # ---- Hidden export settings ----
@@ -161,10 +167,13 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
             'uv_count_operator': self.uv_count_operator,
             'uv_count_value': self.uv_count_value,
             'animation': self.chk_animation,
+            'non_manifold': self.chk_non_manifold,
+            'smooth_shading': self.chk_smooth_shading,
             'material_count': self.chk_material_count,
             'material_naming': self.chk_material_naming,
             'unused_materials': self.chk_unused_materials,
             'collision_matching': self.chk_collision_matching,
+            'transparency_separation': self.chk_transparency_separation,
             'lod_matching': self.chk_lod_matching,
         }
 
@@ -189,10 +198,13 @@ class ExportToUEPropertyGroup(bpy.types.PropertyGroup):
             'uv_count_operator': 'uv_count_operator',
             'uv_count_value': 'uv_count_value',
             'animation': 'chk_animation',
+            'non_manifold': 'chk_non_manifold',
+            'smooth_shading': 'chk_smooth_shading',
             'material_count': 'chk_material_count',
             'material_naming': 'chk_material_naming',
             'unused_materials': 'chk_unused_materials',
             'collision_matching': 'chk_collision_matching',
+            'transparency_separation': 'chk_transparency_separation',
             'lod_matching': 'chk_lod_matching',
         }
         _LOADING_CHECK_SETTINGS = True

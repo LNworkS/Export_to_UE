@@ -44,8 +44,10 @@ class CheckResult:
 # Default regex - can be overridden by user via check settings
 _DEFAULT_MODEL_NAME_REGEX = r'^sm_[a-zA-Z0-9_]*[a-zA-Z0-9]\d{2}$'
 _RE_MODEL_NAME = re.compile(_DEFAULT_MODEL_NAME_REGEX)
-# Material multi-suffix: mi_ + model_middle + _XX (two digits with underscore)
-_RE_MATERIAL_SUFFIX = re.compile(r'_\d{2}$')
+# Material multi-suffix: mi_ + model_middle + <suffix>
+# Accepts both M2-spec letter suffixes (mi_xxx01a/b/c) and the legacy
+# numeric underscore suffixes (mi_xxx01_01/_02).
+_RE_MATERIAL_SUFFIX = re.compile(r'([a-z]|_\d{2})$', re.IGNORECASE)
 
 
 def check_mesh_naming(obj, regex_pattern=None):
@@ -263,6 +265,61 @@ def check_animation(obj):
     return CheckResult(OK, t("Animation Data"), t("None"))
 
 
+def check_non_manifold(obj):
+    """2.1.9 Non-manifold geometry: edges shared by >2 faces, or coincident vertices.
+
+    Loose geometry (isolated verts/edges) is handled separately by
+    check_loose_geometry. This check targets the remaining non-manifold
+    cases that break UV/import quality:
+        - non-manifold edges (connected to more than 2 faces)
+        - duplicated vertices at the same position (mesh must be welded)
+    """
+    if obj.type != 'MESH' or not obj.data:
+        return CheckResult(OK, t("Non-Manifold"), t("Not a mesh object"))
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    nm_edges = sum(1 for e in bm.edges if len(e.link_faces) > 2)
+    seen_pos = {}
+    dup_verts = 0
+    for v in bm.verts:
+        key = (round(v.co.x, 4), round(v.co.y, 4), round(v.co.z, 4))
+        if key in seen_pos:
+            dup_verts += 1
+        else:
+            seen_pos[key] = True
+    bm.free()
+    if nm_edges > 0 or dup_verts > 0:
+        if is_chinese():
+            return CheckResult(ERROR, t("Non-Manifold"),
+                               f"非流形边{nm_edges}条, 重合顶点{dup_verts}个 (需合并顶点)")
+        return CheckResult(ERROR, t("Non-Manifold"),
+                           f"{nm_edges} non-manifold edge(s), {dup_verts} duplicated vert(s) (weld required)")
+    return CheckResult(OK, t("Non-Manifold"), "0")
+
+
+def check_smooth_shading(obj):
+    """2.7 Smooth groups: model must have smooth shading set before export.
+
+    Blender equivalent of the M2 spec's "设置光滑组" (Mark Sharp /
+    Smooth Shading). Warns when every face is flat-shaded, i.e. no
+    smoothing was ever assigned.
+    """
+    if obj.type != 'MESH' or not obj.data:
+        return CheckResult(OK, t("Smooth Shading"), t("Not a mesh object"))
+    mesh = obj.data
+    total = len(mesh.polygons)
+    if total == 0:
+        return CheckResult(OK, t("Smooth Shading"), "0")
+    smooth = sum(1 for p in mesh.polygons if p.use_smooth)
+    if smooth == 0:
+        if is_chinese():
+            return CheckResult(WARN, t("Smooth Shading"),
+                               f"全部 {total} 个面均为平直着色, 未设置光滑组")
+        return CheckResult(WARN, t("Smooth Shading"),
+                           f"all {total} faces flat-shaded, no smooth groups set")
+    return CheckResult(OK, t("Smooth Shading"), f"{smooth}/{total}")
+
+
 # ============================================================
 # Material checks (2.2)
 # ============================================================
@@ -317,6 +374,83 @@ def check_unused_materials(obj):
             return CheckResult(ERROR, t("Unused Materials"), f"{len(unused)}个: {', '.join(unused)}")
         return CheckResult(ERROR, t("Unused Materials"), f"{len(unused)}: {', '.join(unused)}")
     return CheckResult(OK, t("Unused Materials"), "0")
+
+
+# Blend methods that always produce transparency (excludes OPAQUE and CLIP:
+# CLIP/masked materials are supported by Nanite and are not treated as
+# translucent for the separation check). Union of Blender 4.x and 5.x enums;
+# values absent from the current Blender version simply never occur.
+#
+# NOTE: HASHED is intentionally NOT in this set. Blender 5.2 changed the
+# default blend_method of freshly created materials from OPAQUE to HASHED,
+# so a bare unconfigured material must not count as translucent. HASHED is
+# treated as translucent only when the material actually configures alpha
+# (static value < 1 or linked input), see _is_translucent().
+_TRANSLUCENT_BLEND_METHODS = {'BLEND', 'BLEND_ALPHA', 'ADD', 'MULTIPLY', 'SUBTRACT', 'SOFTLIGHT'}
+
+
+def _mat_has_alpha(mat):
+    """True when the material's Principled BSDF alpha is linked or static < 1."""
+    if not mat.node_tree:
+        return False
+    for node in mat.node_tree.nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            inp = node.inputs.get('Alpha')
+            if inp is None:
+                return False
+            if inp.is_linked:
+                return True
+            try:
+                return float(inp.default_value) < 0.999
+            except (TypeError, ValueError):
+                return False
+    return False
+
+
+def _is_translucent(mat):
+    """True when a material uses transparency.
+
+    - BLEND-family blend methods are always translucent.
+    - HASHED is translucent only when alpha is actually configured (linked
+      input or static value < 1); a fresh Blender 5.2 material defaults to
+      HASHED with alpha 1.0 and is effectively opaque.
+    - OPAQUE / CLIP (masked) are not translucent (Nanite supports masked).
+    """
+    if mat.blend_method in _TRANSLUCENT_BLEND_METHODS:
+        return True
+    if mat.blend_method == 'HASHED':
+        return _mat_has_alpha(mat)
+    return False
+
+
+def check_transparency_separation(mesh_objs):
+    """3.4 Translucent material separation (group/Actor level).
+
+    Translucent materials (glass, translucent plastic, soap bubbles...)
+    must not be merged with opaque materials on the same Actor, otherwise
+    Nanite cannot be enabled. Runs once per export group.
+    """
+    translucent = []
+    opaque = []
+    for obj in mesh_objs:
+        if obj.type != 'MESH' or not obj.data:
+            continue
+        for slot in obj.material_slots:
+            mat = slot.material
+            if not mat:
+                continue
+            if _is_translucent(mat):
+                if mat.name not in translucent:
+                    translucent.append(mat.name)
+            elif mat.name not in opaque:
+                opaque.append(mat.name)
+    if translucent and opaque:
+        if is_chinese():
+            return CheckResult(ERROR, t("Transparency Separation"),
+                               f"半透明材质 [{', '.join(translucent)}] 与不透明材质混用, 需分离为独立Actor")
+        return CheckResult(ERROR, t("Transparency Separation"),
+                           f"translucent [{', '.join(translucent)}] mixed with opaque materials, separate them")
+    return CheckResult(OK, t("Transparency Separation"))
 
 
 # ============================================================
@@ -453,6 +587,10 @@ def validate_object(obj, all_mesh_objs, cs):
         results.append(check_uv_count(obj, cs.get('uv_count_operator', '<='), cs.get('uv_count_value', 2)))
     if cs.get('animation', True):
         results.append(check_animation(obj))
+    if cs.get('non_manifold', True):
+        results.append(check_non_manifold(obj))
+    if cs.get('smooth_shading', True):
+        results.append(check_smooth_shading(obj))
 
     # 2.2 Material checks
     if cs.get('material_count', True):
@@ -500,8 +638,12 @@ def validate_lod(obj, lod_objs, mesh_objs, cs, independent_lod=False):
         results.append(check_transform_zero(obj))
     if cs.get('loose_geometry', True):
         results.append(check_loose_geometry(obj))
+    if cs.get('non_manifold', True):
+        results.append(check_non_manifold(obj))
     if cs.get('ngons', True):
         results.append(check_ngons(obj, cs.get('ngon_threshold', 4)))
+    if cs.get('smooth_shading', True):
+        results.append(check_smooth_shading(obj))
     if cs.get('material_count', True):
         results.append(check_material_count(obj))
     return results
@@ -536,10 +678,12 @@ def validate_export_list(export_list, check_settings=None, independent_lod=False
         check_settings = {
             'mesh_naming': True, 'transform_zero': True, 'loose_geometry': True,
             'overlapping_faces': True, 'ngons': True, 'ngon_threshold': 4,
+            'non_manifold': True, 'smooth_shading': True,
             'vertex_color': True, 'uv_count': True, 'uv_count_operator': '<=',
             'uv_count_value': 2, 'animation': True, 'material_count': True,
             'material_naming': True, 'unused_materials': True,
             'collision_matching': True, 'lod_matching': True,
+            'transparency_separation': True,
         }
 
     cs = check_settings
@@ -634,6 +778,16 @@ def validate_export_list(export_list, check_settings=None, independent_lod=False
                         has_errors = True
                     elif r.status == WARN:
                         has_warnings = True
+
+        # 3.4: Translucent material separation at group level (regular + LOD meshes)
+        group_meshes = regular_meshes + lod_meshes
+        if group_meshes and cs.get('transparency_separation', True):
+            trans_result = check_transparency_separation(group_meshes)
+            group_data['group_results'].append(trans_result)
+            if trans_result.status == ERROR:
+                has_errors = True
+            elif trans_result.status == WARN:
+                has_warnings = True
 
         groups.append(group_data)
 

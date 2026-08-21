@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Export_To_UE",
     "author": "BI1MCS",
-    "version": (0, 2, 0),
+    "version": (0, 3, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Export_To_UE",
     "description": "Export models to Unreal Engine with proper FBX settings.",
@@ -34,6 +34,8 @@ from .core.update_operators import (
 from .core.config import get_saved_export_path
 from .core.updater import check_for_update, get_current_version_str, get_cached_result
 from .core.max_export import drain_max_results, get_max_queue_snapshot
+from .core import max_import_operators as max_import_mod
+from . import help as help_mod
 
 
 # ============================================================
@@ -332,6 +334,8 @@ def register():
     bpy.types.Scene.update_settings = bpy.props.PointerProperty(
         type=UpdatePropertyGroup
     )
+    max_import_mod.register()
+    help_mod.register()
 
     # Blender >= 4.x calls load_post handlers with (scene, depsgraph).
     def load_saved_settings(scene, depsgraph):
@@ -375,6 +379,8 @@ def unregister():
         del bpy.types.Scene.update_settings
     except Exception:
         pass
+    help_mod.unregister()
+    max_import_mod.unregister()
     for cls in reversed(classes):
         try:
             bpy.utils.unregister_class(cls)
