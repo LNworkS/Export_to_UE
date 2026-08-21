@@ -33,6 +33,29 @@ _MAX_RESULT_QUEUE = []        # list of result dicts (worker writes)
 _MAX_RESULT_LOCK = threading.Lock()
 _MAX_WORKER = None            # the single background worker thread
 
+# Windows STATUS_ACCESS_VIOLATION (0xC0000005) as returned by subprocess
+# when 3dsmaxbatch.exe crashes. Observed reproducibly with 3ds Max 2024:
+# saveMaxFile returns false and the process crashes on shutdown, so no .max
+# file is ever written. The batch save path is known to work on older
+# versions (verified end-to-end on 3ds Max 2019).
+_MAX_CRASH_ACCESS_VIOLATION = -1073741819
+
+
+def _conversion_failure_hint(ret_code):
+    """Return an extra troubleshooting hint for a failed conversion.
+
+    The main failure message already carries the exit code and 3ds Max
+    version; this adds actionable guidance for the known crash cases.
+    """
+    if ret_code == _MAX_CRASH_ACCESS_VIOLATION:
+        return ". " + t(
+            "Batch saving is known to crash on 3ds Max 2024+. "
+            "Please configure a different 3ds Max version (e.g. 3ds Max 2019) in settings."
+        )
+    if ret_code < 0:
+        return ". " + t("3ds Max crashed during conversion.")
+    return ""
+
 
 def _max_version_from_path(exe_path):
     """Extract a human-readable version tag from a 3dsmaxbatch.exe path.
@@ -72,7 +95,9 @@ def _run_task(task):
         # Keep temp dir on failure so user can inspect log + script.
         return {
             'success': False,
-            'message': f"3ds Max conversion failed (exit={ret_code}, {max_version}). {t('See log for details')}: {log_path}",
+            'message': (f"3ds Max conversion failed (exit={ret_code}, {max_version}). "
+                        f"{t('See log for details')}: {log_path}"
+                        f"{_conversion_failure_hint(ret_code)}"),
             'tmp_dir': tmp_dir,
             'max_version': max_version,
             'output': output_path,

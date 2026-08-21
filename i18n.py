@@ -99,6 +99,8 @@ _TRANSLATIONS = {
     "3ds Max executable not found. Please configure 3dsmaxbatch.exe path in settings.": "未找到 3ds Max 可执行文件。请在设置中配置 3dsmaxbatch.exe 路径。",
     "FBX export failed.": "FBX 导出失败。",
     "See log for details": "查看日志了解详情",
+    "Batch saving is known to crash on 3ds Max 2024+. Please configure a different 3ds Max version (e.g. 3ds Max 2019) in settings.": "3ds Max 2024+ 的批量保存已知会崩溃。请在设置中配置其他 3ds Max 版本（如 3ds Max 2019）。",
+    "3ds Max crashed during conversion.": "3ds Max 转换过程中崩溃。",
     "Saved: ": "已保存：",
     "Max Conversion": "MAX转换",
     "Converting: ": "正在转换：",

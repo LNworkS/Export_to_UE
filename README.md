@@ -16,6 +16,8 @@ Blender 5.x 扩展：将模型导出到 Unreal Engine（FBX），通过 3dsmaxba
 - 需在设置中配置 `3dsmaxbatch.exe` 路径（3ds Max 版本按项目要求显式指定）
 - 转换在后台队列执行，可连续点击多个任务
 - `Use Blender File Name`：勾选时 .max 文件名跟随当前 .blend 文件名
+- 已在 3ds Max 2019 上端到端验证（FBX 导入 → XForm 复位 → 材质名规范化 → 保存为 2019 格式 .max）
+- ⚠️ 已知限制：3ds Max 2024 的 `3dsmaxbatch.exe` 批量保存会失败并崩溃（`saveMaxFile` 返回 false，进程退出码 0xC0000005），请为 Save as .Max 配置 2019–2023 任一版本；2024 仍可用于 Import Max 单位读取
 
 ### 3. Import Max with Units（导入 .max 并换算单位）
 - 入口：`File > Import > Autodesk MAX (.max) with Units`
@@ -39,7 +41,7 @@ Blender 5.x 扩展：将模型导出到 Unreal Engine（FBX），通过 3dsmaxba
 
 ## 3ds Max 配置
 
-- `Save as .Max` 面板 → 齿轮图标 → 配置 `3dsmaxbatch.exe` 路径（如 `G:\Program Files\Autodesk\3ds Max 2024\3dsmaxbatch.exe`）
+- `Save as .Max` 面板 → 齿轮图标 → 配置 `3dsmaxbatch.exe` 路径（如 `G:\Program Files\Autodesk\3ds Max 2019\3dsmaxbatch.exe`；避免使用 2024，见上文已知限制）
 - Import Max 单位读取优先使用该配置；未配置时自动探测常见安装路径，多版本时按"文件版本匹配 → 最近更高版本"选择，无版本信息时选用最新安装
 
 ## 单位换算原理
